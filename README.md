@@ -108,6 +108,10 @@ relaunch automatically.
 ## How it works
 
 - A Chromium app window is launched with a dedicated profile.
+- The Hyprland rule uses `opacity = "1 override 1 override"` plus
+  `no_dim = true`, so the global `inactive_opacity` / `dim_inactive` in
+  `~/.config/hypr/looknfeel.lua` do not make these windows translucent. The
+  looknfeel itself is left untouched.
 - A generated extension:
   - seeds `localStorage["strata.apikey"]` from the config (the web app reads
     its key from there),

@@ -6,7 +6,7 @@
 o.window({ class = "^chrome-ai-brain__-Default$" }, {
   float = true,
   tag = "-default-opacity",
-  opacity = "1 1",
+  opacity = "1 override 1 override",
   no_dim = true,
   border_size = 1,
 })
@@ -14,7 +14,7 @@ o.window({ class = "^chrome-ai-brain__-Default$" }, {
 o.window({ title = "^(Strata|Strata Mini)$" }, {
   float = true,
   tag = "-default-opacity",
-  opacity = "1 1",
+  opacity = "1 override 1 override",
   no_dim = true,
   border_size = 1,
 })
