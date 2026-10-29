@@ -1,0 +1,9 @@
+/* Optional styling for the Waybar custom module. */
+#custom-strata-mini {
+  padding: 0 8px;
+  margin: 0 2px;
+}
+
+#custom-strata-mini.active {
+  color: #6ee7a8;
+}

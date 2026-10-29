@@ -1,0 +1,12 @@
+// Add this module to one of your modules-* arrays in ~/.config/waybar/config.jsonc.
+// It uses the same provider contract as the Omarchy module.
+"custom/strata-mini": {
+  "exec": "~/.local/bin/monitor-dock status --provider strata --target mini",
+  "return-type": "json",
+  "interval": 2,
+  "tooltip": true,
+  "format": "{}",
+  "on-click": "~/.local/bin/monitor-dock toggle --provider strata --target mini",
+  "on-click-right": "~/.local/bin/monitor-dock pin --provider strata --target mini",
+  "on-click-middle": "~/.local/bin/monitor-dock close --provider strata --target mini"
+}

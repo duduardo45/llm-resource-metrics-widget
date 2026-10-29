@@ -1,0 +1,10 @@
+{
+  "id": "strata-monitor-mini",
+  "type": "command",
+  "exec": "~/.local/bin/monitor-dock status --provider strata --target mini",
+  "interval": 2,
+  "tooltip": "Strata mini",
+  "onClick": "~/.local/bin/monitor-dock toggle --provider strata --target mini",
+  "onRightClick": "~/.local/bin/monitor-dock pin --provider strata --target mini",
+  "onMiddleClick": "~/.local/bin/monitor-dock close --provider strata --target mini"
+}

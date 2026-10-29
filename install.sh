@@ -10,9 +10,11 @@ HYPR_DIR="$HOME/.config/hypr"
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
 
 mkdir -p "$BIN_DIR" "$CONFIG_DIR" "${XDG_STATE_HOME:-$HOME/.local/state}/strata-monitor"
-chmod +x "$REPO/bin/strata-monitor" "$REPO/bin/strata-monitor-ctl"
+chmod +x "$REPO/bin/monitor-dock" "$REPO/bin/strata-monitor" "$REPO/bin/strata-monitor-ctl" \
+  "$REPO/providers/strata/provider.sh" "$REPO/providers/strata/engine.sh" "$REPO/providers/example/provider.sh"
 chmod 700 "$CONFIG_DIR" "${XDG_STATE_HOME:-$HOME/.local/state}/strata-monitor" 2>/dev/null || true
 
+ln -sfn "$REPO/bin/monitor-dock" "$BIN_DIR/monitor-dock"
 ln -sfn "$REPO/bin/strata-monitor" "$BIN_DIR/strata-monitor"
 ln -sfn "$REPO/bin/strata-monitor-ctl" "$BIN_DIR/strata-monitor-ctl"
 
@@ -63,20 +65,21 @@ bar = data.setdefault("bar", {})
 layout = bar.setdefault("layout", {})
 right = layout.setdefault("right", [])
 
-def module(ident, icon_label, extra):
+def module(ident, label, provider, target):
+    base = f"~/.local/bin/monitor-dock {{command}} --provider {provider} --target {target}"
     return {
         "id": ident,
         "type": "command",
-        "exec": f"~/.local/bin/strata-monitor{extra} status",
+        "exec": base.format(command="status"),
         "interval": 2,
-        "tooltip": icon_label,
-        "onClick": f"~/.local/bin/strata-monitor{extra} toggle",
-        "onRightClick": f"~/.local/bin/strata-monitor{extra} pin",
-        "onMiddleClick": f"~/.local/bin/strata-monitor{extra} close",
+        "tooltip": label,
+        "onClick": base.format(command="toggle"),
+        "onRightClick": base.format(command="pin"),
+        "onMiddleClick": base.format(command="close"),
     }
 
 entries = [
-    module("strata-monitor-mini", "Strata mini", " --mini"),
+    module("strata-monitor-mini", "Strata mini", "strata", "mini"),
 ]
 # Remove the old normal-layout icon too. The normal layout is reached by
 # double-clicking the mini window (or `strata-monitor open`).
@@ -94,12 +97,17 @@ cat <<EOF
 Installed the floating Strata monitor.
 
   config: $CONFIG
-  binary: $BIN_DIR/strata-monitor
+  app:    $BIN_DIR/monitor-dock
+  compat: $BIN_DIR/strata-monitor
 
 Set "apiKey" in the config, then open it from the bar or with:
-  strata-monitor --mini open
-  strata-monitor open        # normal layout
+  monitor-dock open --provider strata --target normal
+  monitor-dock open --provider strata --target mini
 
-The bar has only the mini module. Double-click the mini window to switch to
-the normal layout, and double-click the normal window to switch back.
+The Omarchy bar has only the mini module. Double-click the mini window to
+switch to the normal layout, and double-click the normal window to switch back.
+
+Waybar: copy bar/waybar/config.jsonc and bar/waybar/style.css into your
+Waybar config. The same provider contract works for both bars and for other
+resource monitors in providers/.
 EOF

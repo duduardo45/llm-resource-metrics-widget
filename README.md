@@ -1,27 +1,53 @@
 # Strata floating monitor
 
-A tiny floating Strata monitor for Hyprland/Omarchy, opened from the bar.
+A floating monitor dock for Hyprland with a provider layer and thin bar
+adapters. Strata is the first provider; the same application and bar adapters
+can drive other resource monitors without changing the bar configuration.
 
-There are two layouts:
+## Layers
 
-- **Normal**: the real Strata Monitor page in a compact floating window, scaled
-  and forced to a 4-column metrics grid (8 graphs visible). Decode is green and
-  prefill is blue in the speed card, matching the mini layout.
-- **Mini**: a custom one-graph dashboard with the model state, progress bar,
-  and left/right arrows. It polls the same Strata `/metrics` endpoint. The
-  Speed graph shows Decode (green) and Prefill (blue) together, like the
-  normal Strata speed card.
+```
+bar/omarchy/   bar/waybar/        presentation adapters
+        \         /
+      bin/monitor-dock            application layer (bar-agnostic CLI)
+              |
+     providers/<name>/provider.sh provider contract
+              |
+   providers/strata/engine.sh     provider implementation (use cases)
+              |
+   Hyprland | Chromium | Strata   infrastructure / external systems
+```
+
+- `bin/monitor-dock` knows only the provider contract and normalized JSON.
+- `providers/<name>/provider.sh` is the adapter for one monitor.
+- `providers/strata/engine.sh` contains the Strata use cases and the
+  Hyprland/Chromium infrastructure calls.
+- `bar/omarchy` and `bar/waybar` are presentation adapters; they only call
+  `monitor-dock`.
+- `extension/` is the UI adapter used by the Strata provider's Chromium window.
+
+See [`docs/architecture.md`](docs/architecture.md) and
+[`providers/README.md`](providers/README.md).
+
+## Layouts
+
+The Strata provider has two targets:
+
+- **normal** — the real Strata Monitor page in a compact floating window,
+  scaled and forced to a 4-column metrics grid (8 graphs visible). Decode is
+  green and prefill is blue in the speed card.
+- **mini** — a custom one-graph dashboard with model state, progress bar, and
+  left/right arrows. Speed shows Decode (green) and Prefill (blue) together.
 
 Double-click either floating window (away from its buttons) to switch between
 the normal and mini layouts. When the mini window is closed, its bar entry
-shows the selected graph's current value (no label); the graph selection and
-current value are kept in sync with the bar.
+shows the selected graph's value (no label), kept in sync with the last graph
+shown.
 
 ## Requirements
 
-- Hyprland (the script uses the Lua dispatcher API, e.g.
-  `hl.dsp.window.pin(...)`)
-- Omarchy shell for the bar modules (or adapt the commands for another bar)
+- Hyprland (the engine uses the Lua dispatcher API)
+- Omarchy shell or Waybar for the bar adapter
 - `chromium`, `jq`, `curl`, `python3`
 
 ## Install
@@ -32,15 +58,14 @@ current value are kept in sync with the bar.
 
 This creates:
 
-- `~/.local/bin/strata-monitor` and `~/.local/bin/strata-monitor-ctl`
-  (symlinks into this repo)
-- `~/.config/strata-monitor/config.json` (created from
-  `config/config.example.json` if missing)
-- `~/.config/hypr/strata.lua` (symlink) and requires it from
-  `~/.config/hypr/hyprland.lua`
-- two command modules in `~/.config/omarchy/shell.json`
+- `~/.local/bin/monitor-dock` (application entry point)
+- `~/.local/bin/strata-monitor` (compatibility wrapper)
+- `~/.local/bin/strata-monitor-ctl` (double-click bridge)
+- `~/.config/strata-monitor/config.json` from the example if missing
+- `~/.config/hypr/strata.lua` and requires it from `hyprland.lua`
+- the single mini module in `~/.config/omarchy/shell.json`
 
-Then put the Strata API key in the config:
+Then set the API key in the config:
 
 ```json
 {
@@ -48,42 +73,122 @@ Then put the Strata API key in the config:
 }
 ```
 
+Waybar is not modified automatically. Copy the snippets from
+[`bar/waybar/`](bar/waybar/) into `~/.config/waybar/` as described there.
+
 ## Usage
 
+Generic application (recommended):
+
 ```bash
-strata-monitor open          # normal layout, or bring it to the current workspace
-strata-monitor toggle        # open/close
-strata-monitor pin           # pin/unpin across workspaces
-strata-monitor close
-
-strata-monitor --mini open   # mini layout
-strata-monitor --mini toggle
-strata-monitor --mini pin
-strata-monitor --mini close
-
-strata-monitor reload        # reload the current layout after a config change
-strata-monitor switch        # normal <-> mini
-strata-monitor ctl-stop      # stop the local double-click server
+monitor-dock status --provider strata --target mini
+monitor-dock toggle --provider strata --target mini
+monitor-dock open   --provider strata --target normal
+monitor-dock pin    --provider strata --target mini
+monitor-dock close  --provider strata --target mini
+monitor-dock switch --provider strata
 ```
 
-Bar module (right side, next to the display widget):
+`monitor-dock providers` lists providers and
+`monitor-dock targets --provider strata` lists targets. The default provider is
+`strata`; the default target is the provider's `default: true` target.
 
-- **Minimize/value** — the mini layout. When the mini window is closed it shows
-  the selected graph's value; when open it shows the minimize icon.
+The old `strata-monitor` CLI remains as a compatibility wrapper:
 
-Controls:
+```bash
+strata-monitor open
+strata-monitor --mini open
+strata-monitor pin
+strata-monitor switch
+strata-monitor ctl-stop
+```
+
+Bar controls (both adapters):
 
 - left click: toggle the mini open/close
 - right click: pin/unpin
 - middle click: close
 
-There is intentionally no separate normal-layout icon. Double-click the mini
-window to switch to the normal 4-column layout; double-click the normal
-window to switch back. You can also run `strata-monitor open`.
+There is intentionally no separate normal-layout bar icon. Double-click the
+mini window to switch to normal; double-click the normal window to switch back.
+You can also use `monitor-dock open --provider strata --target normal`.
 
-The mini window also supports `←`/`→` and the mouse wheel to change graphs.
-While the mini window is closed, its bar entry shows the selected value, e.g.
-`100%`, `61 °C`, or `19.1 t/s`, without the graph label.
+The mini window supports `←`/`→` and the mouse wheel to change graphs.
+
+## Bar adapters
+
+### Omarchy (Quickshell)
+
+`install.sh` inserts
+[`bar/omarchy/module.json`](bar/omarchy/module.json) into
+`~/.config/omarchy/shell.json`:
+
+```json
+{
+  "id": "strata-monitor-mini",
+  "type": "command",
+  "exec": "~/.local/bin/monitor-dock status --provider strata --target mini",
+  "interval": 2,
+  "tooltip": "Strata mini",
+  "onClick": "~/.local/bin/monitor-dock toggle --provider strata --target mini",
+  "onRightClick": "~/.local/bin/monitor-dock pin --provider strata --target mini",
+  "onMiddleClick": "~/.local/bin/monitor-dock close --provider strata --target mini"
+}
+```
+
+The live layout is user config and is not tracked.
+
+### Waybar
+
+Copy the module from
+[`bar/waybar/config.jsonc`](bar/waybar/config.jsonc) into
+`~/.config/waybar/config.jsonc`, add `"custom/strata-mini"` to
+`modules-right`, and optionally copy
+[`bar/waybar/style.css`](bar/waybar/style.css) into
+`~/.config/waybar/style.css`.
+
+Waybar uses the same JSON:
+
+```json
+{"text":"19.1 t/s","tooltip":"Strata mini — Speed 19.1 t/s (closed)","class":""}
+```
+
+`text`, `tooltip`, `class`, `alt`, and `percentage` are supported by the
+normalized status shape. Waybar applies `class` to the widget, so
+`#custom-strata-mini.active` highlights the pinned state.
+
+## Provider contract
+
+A provider is `providers/<name>/provider.sh` with these subcommands:
+
+| Command | Output / action |
+| --- | --- |
+| `targets` | JSON array of `{id, label, default?}` |
+| `status <target>` | JSON object with at least `text`; optional `tooltip`, `class`, `alt`, `percentage` |
+| `open <target>` | open the target's window |
+| `toggle <target>` | toggle it |
+| `pin <target>` | toggle pin/always-on-top |
+| `close <target>` | close it |
+| `reload <target>` | reload it |
+| `switch [target]` | switch layout/context if the provider supports it |
+
+`monitor-dock` validates the status JSON and falls back to an error state if a
+provider is unavailable. Provider-specific commands (for example
+`ctl-stop`) are passed through unchanged.
+
+An annotated reference implementation is in
+[`providers/example/provider.sh`](providers/example/provider.sh). To add a new
+resource monitor, copy that directory:
+
+```bash
+mkdir -p providers/my-monitor
+cp providers/example/provider.sh providers/my-monitor/provider.sh
+$EDITOR providers/my-monitor/provider.sh
+monitor-dock status --provider my-monitor
+```
+
+Then point the bar adapter at `--provider my-monitor`. Neither the application
+nor the bar adapter needs to change. See [`providers/README.md`](providers/README.md).
 
 ## Configuration
 
@@ -94,8 +199,8 @@ While the mini window is closed, its bar entry shows the selected value, e.g.
 | `url` | Strata URL, normally `http://ai-brain:8080/#monitor` |
 | `apiKey` | Bearer token sent to `/metrics` |
 | `width`, `height` | Normal window size |
-| `zoom` | CSS zoom for the normal page (`0.8` is a good compact value) |
-| `columns` | Number of metrics columns to force in the normal page |
+| `zoom` | CSS zoom for the normal page |
+| `columns` | Metrics columns forced in the normal page |
 | `position` | `top-right`, `top-left`, `bottom-right`, or `bottom-left` |
 | `margin` | Gap from the screen edge |
 | `pinOnOpen` | Pin on every open; keeps the window above other windows |
@@ -105,63 +210,62 @@ While the mini window is closed, its bar entry shows the selected value, e.g.
 | `mini.pinOnOpen` | Pin the mini on every open |
 | `mini.profileDir` | Separate Chromium profile for the mini layout |
 
-Apply changes to an open window with `strata-monitor reload` (or close and
-reopen). API-key/URL changes are detected on the next `open`/`toggle` and
-relaunch automatically.
+Apply changes to an open window with
+`monitor-dock reload --provider strata --target mini` (or use the
+`strata-monitor` wrapper). API-key/URL changes are detected on the next
+open/toggle and relaunch automatically.
 
 ## How it works
 
-- A Chromium app window is launched with a dedicated profile.
-- The Hyprland rule uses `opacity = "1 override 1 override"` plus
-  `no_dim = true`, so the global `inactive_opacity` / `dim_inactive` in
-  `~/.config/hypr/looknfeel.lua` do not make these windows translucent. The
-  looknfeel itself is left untouched.
-- A generated extension:
-  - seeds `localStorage["strata.apikey"]` from the config (the web app reads
-    its key from there),
-  - applies the normal-layout zoom/grid override,
-  - provides `mini.js`, which overlays the custom mini dashboard when the URL
-    contains `?mini=1`,
-  - listens for double-clicks and asks the local control server to switch.
-- `strata-monitor-ctl` is a small localhost-only HTTP server started on the
-  first launch. It handles `/switch` by running `strata-monitor switch` and
-  stores the mini graph selection (`/graph`) so the bar can show its value.
-- Hyprland is used for floating, sizing, positioning, pinning, and closing the
-  windows.
-
-The normal layout uses the real Strata page. The mini layout reads the same
-`/metrics` JSON directly: `live`, `hardware`, `hardware_static`, `requests`,
-and the `history` series arrays. Its Speed card renders `tok_s` in green and
-`prefill_tok_s_mean` in blue, with independent sparkline scales like the
-normal app. The selected graph index is stored in
-`~/.local/state/strata-monitor/mini-graph` so the closed-window bar value
-matches the last graph shown.
+- `monitor-dock` resolves a provider and a target, then calls `status` or an
+  action.
+- `providers/strata/provider.sh` maps the contract to the Strata engine.
+- The engine launches a Chromium app window with a dedicated profile. A
+  generated extension seeds the API key, applies the normal-layout overrides,
+  provides the optional-overlay mini dashboard, and handles double-click.
+- `strata-monitor-ctl` is a localhost-only HTTP server used for the
+  double-click bridge and the mini graph selection.
+- Hyprland handles floating, sizing, positioning, pinning, and closing.
+- The Hyprland rule uses `opacity = "1 override 1 override"` and
+  `no_dim = true`, so the global `inactive_opacity`/`dim_inactive` looknfeel
+  settings do not make these windows translucent. The looknfeel itself is
+  untouched.
 
 ## Repo layout
 
 ```
-bin/strata-monitor        # launcher, bar status, pin/switch logic
-bin/strata-monitor-ctl    # localhost double-click bridge
-extension/mini.html       # mini dashboard markup
-extension/mini.css        # mini dashboard styling
-extension/mini.js         # mini dashboard logic/polling
-extension/dblclick.js     # double-click -> control server
+bin/monitor-dock              # application layer, bar-agnostic
+bin/strata-monitor            # compatibility wrapper
+bin/strata-monitor-ctl        # localhost double-click bridge
+providers/strata/provider.sh  # Strata provider adapter
+providers/strata/engine.sh    # Strata use cases + infrastructure
+providers/example/provider.sh # annotated provider template
+extension/mini.html           # mini dashboard markup
+extension/mini.css            # mini dashboard styling
+extension/mini.js             # mini dashboard logic/polling
+extension/dblclick.js         # double-click -> control server
 config/config.example.json
-hypr/strata.lua           # floating window rule
-bar/omarchy-shell-module.json  # Omarchy bar module snippet
-bar/README.md             # how the bar integration is applied
+hypr/strata.lua               # floating/opacity window rules
+bar/omarchy/module.json       # Omarchy bar module snippet
+bar/waybar/                   # Waybar config/style snippets
+bar/README.md                 # bar adapter overview
+docs/architecture.md          # layer boundaries and contract
+providers/README.md           # provider contract
 install.sh
+tests/test-monitor-dock.sh
 ```
 
 ## Troubleshooting
 
-- **API key needed**: set `apiKey` in the config and run
-  `strata-monitor reload`.
+- **API key needed**: set `apiKey` in the config and reload the mini/normal
+  target.
 - **Double-click does nothing**: check
-  `curl http://127.0.0.1:8787/health`; if it fails, run `strata-monitor open`
-  once to start the control server, or check
+  `curl http://127.0.0.1:8787/health`; run `monitor-dock open --provider strata
+  --target mini` to start the control server, or inspect
   `~/.local/state/strata-monitor/control.log`.
-- **Wrong window size/position**: edit the config and run
-  `strata-monitor reload`.
+- **Wrong window size/position**: edit the config and reload.
+- **Bar shows `!`**: run
+  `monitor-dock status --provider strata --target mini` manually; the tooltip
+  reports an unavailable provider or invalid status.
 - **Two browser processes**: normal and mini use separate Chromium profiles by
-  design. Only one layout is open at a time when you use double-click/switch.
+  design. Double-click/switch keeps only one layout open.

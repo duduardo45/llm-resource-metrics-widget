@@ -1,25 +1,24 @@
-# Omarchy bar integration
+# Bar adapters
 
-The live bar layout is `~/.config/omarchy/shell.json`. It is user config and is
-not tracked here. `install.sh` adds the module below to
-`bar.layout.right`, just before `omarchy.monitor`.
+The application layer is `bin/monitor-dock`; bar adapters are intentionally
+thin and only know the provider contract.
 
-```json
-{
-  "id": "strata-monitor-mini",
-  "type": "command",
-  "exec": "~/.local/bin/strata-monitor --mini status",
-  "interval": 2,
-  "tooltip": "Strata mini",
-  "onClick": "~/.local/bin/strata-monitor --mini toggle",
-  "onRightClick": "~/.local/bin/strata-monitor --mini pin",
-  "onMiddleClick": "~/.local/bin/strata-monitor --mini close"
-}
-```
+| Bar | Adapter | Installation |
+| --- | --- | --- |
+| Omarchy (Quickshell) | `omarchy/module.json` | `install.sh` merges it into `~/.config/omarchy/shell.json` |
+| Waybar | `waybar/config.jsonc` + `waybar/style.css` | copy the snippets into `~/.config/waybar/` |
 
-Only the mini module is installed. The normal (4-column) layout is opened by
-double-clicking the mini window, by double-clicking the mini bar value while
-the window is open, or with `strata-monitor open`. Double-clicking the normal
-window switches back to the mini.
+The live Omarchy layout is user config (`~/.config/omarchy/shell.json`) and is
+not tracked; `install.sh` and `omarchy/module.json` are the tracked integration.
 
-This is the Omarchy (Quickshell) bar, not Waybar.
+Only one Strata bar entry is installed: the mini module. It shows the selected
+graph value when the mini is closed, and the minimize icon when it is open.
+Double-click the mini window to switch to the normal layout and double-click
+the normal window to switch back. You can also use `monitor-dock open` or
+`strata-monitor open`.
+
+## Swapping monitors
+
+Change `--provider strata` to another provider from `providers/`. The bar
+adapter does not need to know whether the source is Strata, nvidia-smi, btop,
+Prometheus, or anything else.

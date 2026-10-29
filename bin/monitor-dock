@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# monitor-dock - bar-agnostic entry point for floating resource monitors.
+#
+# It knows only the provider contract, not Strata, Hyprland, Chromium, Waybar,
+# or the Omarchy shell. Providers live in providers/<name>/provider.sh.
+#
+# Usage:
+#   monitor-dock [--provider NAME] [--target TARGET] <command>
+#
+# Commands:
+#   status          emit Waybar/Omarchy-compatible JSON on stdout
+#   open|toggle|pin|close|reload|switch
+#   targets         list the provider's targets
+#   providers       list installed providers
+#
+# Environment:
+#   MONITOR_DOCK_PROVIDER      default provider (strata)
+#   MONITOR_DOCK_PROVIDER_DIR  extra/override provider directory
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+PROJECT_DIR=$(cd "$HERE/.." && pwd)
+PROVIDER_DIR="${MONITOR_DOCK_PROVIDER_DIR:-$PROJECT_DIR/providers}"
+PROVIDER="${MONITOR_DOCK_PROVIDER:-strata}"
+TARGET=""
+COMMAND=""
+POSITIONAL=()
+
+usage() {
+  cat <<'EOF'
+Usage: monitor-dock [--provider NAME] [--target TARGET] <command>
+
+Commands:
+  status                         emit Waybar/Omarchy-compatible JSON
+  open | toggle | pin | close    control the floating window
+  reload | switch                provider-specific lifecycle
+  targets                        list provider targets
+  providers                      list installed providers
+
+Examples:
+  monitor-dock status --provider strata --target mini
+  monitor-dock toggle --provider strata --target mini
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --provider)
+      PROVIDER="${2:?--provider needs a value}"
+      shift 2
+      ;;
+    --provider=*)
+      PROVIDER="${1#*=}"
+      shift
+      ;;
+    --target)
+      TARGET="${2:?--target needs a value}"
+      shift 2
+      ;;
+    --target=*)
+      TARGET="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      POSITIONAL+=("$@")
+      break
+      ;;
+    -*)
+      echo "monitor-dock: unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+COMMAND="${POSITIONAL[0]:-status}"
+
+resolve_provider() {
+  local name="$1"
+  if [[ "$name" == */* ]]; then
+    printf '%s' "$name"
+  elif [[ -x "$PROVIDER_DIR/$name/provider.sh" ]]; then
+    printf '%s' "$PROVIDER_DIR/$name/provider.sh"
+  elif [[ -x "$PROVIDER_DIR/$name" ]]; then
+    printf '%s' "$PROVIDER_DIR/$name"
+  else
+    return 1
+  fi
+}
+
+if [[ "$COMMAND" == "providers" ]]; then
+  find "$PROVIDER_DIR" -mindepth 2 -maxdepth 2 -name provider.sh -printf '%h\n' 2>/dev/null |
+    xargs -r -n1 basename | sort
+  exit 0
+fi
+
+if ! PROVIDER_PATH=$(resolve_provider "$PROVIDER"); then
+  echo "monitor-dock: provider not found: $PROVIDER (looked in $PROVIDER_DIR)" >&2
+  exit 2
+fi
+
+if [[ "$COMMAND" == "targets" ]]; then
+  exec "$PROVIDER_PATH" targets
+fi
+
+if [[ -z "$TARGET" ]]; then
+  TARGET=$("$PROVIDER_PATH" targets | jq -r '
+    if length == 0 then ""
+    else ([.[] | select(.default == true)][0].id // .[0].id)
+    end
+  ')
+fi
+
+if [[ -z "$TARGET" ]]; then
+  echo "monitor-dock: provider $PROVIDER has no default target" >&2
+  exit 2
+fi
+
+case "$COMMAND" in
+  status)
+    if ! OUTPUT=$("$PROVIDER_PATH" status "$TARGET" 2>/dev/null); then
+      jq -cn --arg t "monitor provider '$PROVIDER' unavailable" \
+        '{text:"!", tooltip:$t, class:"error"}'
+      exit 0
+    fi
+    if ! printf '%s' "$OUTPUT" | jq -e 'type == "object" and has("text")' >/dev/null 2>&1; then
+      jq -cn --arg t "invalid status from provider '$PROVIDER'" \
+        '{text:"!", tooltip:$t, class:"error"}'
+      exit 0
+    fi
+    # Waybar and the Omarchy command module both understand this shape.
+    printf '%s' "$OUTPUT" |
+      jq -c '{text, tooltip, class, alt, percentage} | with_entries(select(.value != null))'
+    ;;
+  open|toggle|pin|close|reload|switch)
+    exec "$PROVIDER_PATH" "$COMMAND" "$TARGET"
+    ;;
+  *)
+    # Provider-specific commands (e.g. ctl-stop) are passed through.
+    exec "$PROVIDER_PATH" "$COMMAND" "$TARGET"
+    ;;
+esac
