@@ -76,11 +76,12 @@ def module(ident, icon_label, extra):
     }
 
 entries = [
-    module("strata-monitor", "Strata monitor", ""),
     module("strata-monitor-mini", "Strata mini", " --mini"),
 ]
-ids = {item["id"] for item in entries}
-right = [item for item in right if not (isinstance(item, dict) and item.get("id") in ids)]
+# Remove the old normal-layout icon too. The normal layout is reached by
+# double-clicking the mini window (or `strata-monitor open`).
+remove_ids = {"strata-monitor", "strata-monitor-mini"}
+right = [item for item in right if not (isinstance(item, dict) and item.get("id") in remove_ids)]
 index = next((i for i, item in enumerate(right) if isinstance(item, dict) and item.get("id") == "omarchy.monitor"), len(right))
 right[index:index] = entries
 layout["right"] = right
@@ -96,8 +97,9 @@ Installed the floating Strata monitor.
   binary: $BIN_DIR/strata-monitor
 
 Set "apiKey" in the config, then open it from the bar or with:
-  strata-monitor open
   strata-monitor --mini open
+  strata-monitor open        # normal layout
 
-Double-click the floating window to switch between normal and mini.
+The bar has only the mini module. Double-click the mini window to switch to
+the normal layout, and double-click the normal window to switch back.
 EOF

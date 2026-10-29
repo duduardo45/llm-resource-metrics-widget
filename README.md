@@ -66,16 +66,20 @@ strata-monitor switch        # normal <-> mini
 strata-monitor ctl-stop      # stop the local double-click server
 ```
 
-Bar modules (right side, next to the display widget):
+Bar module (right side, next to the display widget):
 
-- **Chart icon** — normal layout
-- **Minimize icon** — mini layout
+- **Minimize/value** — the mini layout. When the mini window is closed it shows
+  the selected graph's value; when open it shows the minimize icon.
 
-For either module:
+Controls:
 
-- left click: toggle open/close
+- left click: toggle the mini open/close
 - right click: pin/unpin
 - middle click: close
+
+There is intentionally no separate normal-layout icon. Double-click the mini
+window to switch to the normal 4-column layout; double-click the normal
+window to switch back. You can also run `strata-monitor open`.
 
 The mini window also supports `←`/`→` and the mouse wheel to change graphs.
 While the mini window is closed, its bar entry shows the selected value, e.g.
@@ -144,6 +148,8 @@ extension/mini.js         # mini dashboard logic/polling
 extension/dblclick.js     # double-click -> control server
 config/config.example.json
 hypr/strata.lua           # floating window rule
+bar/omarchy-shell-module.json  # Omarchy bar module snippet
+bar/README.md             # how the bar integration is applied
 install.sh
 ```
 
