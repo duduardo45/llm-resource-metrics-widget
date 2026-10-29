@@ -94,11 +94,11 @@ While the mini window is closed, its bar entry shows the selected value, e.g.
 | `columns` | Number of metrics columns to force in the normal page |
 | `position` | `top-right`, `top-left`, `bottom-right`, or `bottom-left` |
 | `margin` | Gap from the screen edge |
-| `pinOnOpen` | Initial pin state (the last pin state is remembered) |
+| `pinOnOpen` | Pin on every open; keeps the window above other windows |
 | `controlPort` | Localhost port used by the double-click bridge |
 | `mini.width`, `mini.height` | Mini window size |
 | `mini.position`, `mini.margin` | Mini placement |
-| `mini.pinOnOpen` | Mini initial pin state |
+| `mini.pinOnOpen` | Pin the mini on every open |
 | `mini.profileDir` | Separate Chromium profile for the mini layout |
 
 Apply changes to an open window with `strata-monitor reload` (or close and

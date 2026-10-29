@@ -161,16 +161,18 @@
 
   let metricIndex = 0;
   let restoredIndex = false;
-  try {
-    const saved = Number(localStorage.getItem("strata-mini.metric"));
-    if (Number.isInteger(saved) && saved >= 0 && saved < METRICS.length) {
-      metricIndex = saved;
-      restoredIndex = true;
-    }
-  } catch (e) {}
+  // The launcher's saved index is authoritative because the bar uses it too;
+  // localStorage is the fallback when the page is reloaded in place.
+  const savedConfigIndex = Number(cfg.miniGraph);
+  if (Number.isInteger(savedConfigIndex) && savedConfigIndex >= 0 && savedConfigIndex < METRICS.length) {
+    metricIndex = savedConfigIndex;
+    restoredIndex = true;
+  }
   if (!restoredIndex) {
-    const saved = Number(cfg.miniGraph);
-    if (Number.isInteger(saved) && saved >= 0 && saved < METRICS.length) metricIndex = saved;
+    try {
+      const saved = Number(localStorage.getItem("strata-mini.metric"));
+      if (Number.isInteger(saved) && saved >= 0 && saved < METRICS.length) metricIndex = saved;
+    } catch (e) {}
   }
 
   let lastData = null;
@@ -352,6 +354,13 @@
       },
       { passive: false },
     );
+
+    // Keep the bar's saved selection in sync with what this window shows.
+    if (cfg.controlUrl) {
+      fetch(`${cfg.controlUrl}/graph?n=${metricIndex}`, { mode: "no-cors", cache: "no-store" }).catch(
+        () => {},
+      );
+    }
 
     renderMetric(null);
 

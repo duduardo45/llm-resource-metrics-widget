@@ -285,7 +285,13 @@ try {
   localStorage.setItem("strata.apikey", JSON.stringify($key_js));
 } catch (e) {}
 try {
-  if (!new URLSearchParams(location.search).has("mini")) {
+  if (new URLSearchParams(location.search).has("mini")) {
+    // Set an opaque background before the first paint so Chromium creates an
+    // opaque Wayland surface (otherwise inactive-window compositing can show
+    // the desktop through the mini panel).
+    document.documentElement.style.setProperty("background-color", "#141518", "important");
+    document.documentElement.style.colorScheme = "dark";
+  } else {
     document.documentElement.style.zoom = $zoom_js;
     var st = document.createElement("style");
     st.textContent = ".metrics{grid-template-columns:repeat(" + $cols_js + ",minmax(0,1fr))!important}" +
@@ -371,6 +377,7 @@ launch_window() {
     --no-default-browser-check \
     --app="$URL" \
     --window-size="$WIDTH,$HEIGHT" \
+    --default-background-color=141518 \
     >/dev/null 2>&1 &
 
   if ! addr=$(wait_for_window); then
@@ -383,12 +390,12 @@ launch_window() {
   [[ -n "$pid" ]] && printf '%s\n' "$pid" > "$BROWSER_PID_FILE"
   printf '%s\n' "$LAUNCH_SIG" > "$SIG_FILE"
 
-  if [[ "$force_pin" == "true" ]]; then
+  # pinOnOpen is a policy, not just a first-run default: when it is true the
+  # window is pinned every time it opens, so it stays above other windows.
+  if [[ "$force_pin" == "true" || "$PIN_ON_OPEN" == "true" ]]; then
     want_pinned=true
   elif [[ -f "$STATE_PINNED" ]]; then
     [[ "$(cat "$STATE_PINNED")" == "1" ]] && want_pinned=true
-  elif [[ "$PIN_ON_OPEN" == "true" ]]; then
-    want_pinned=true
   fi
 
   if [[ "$want_pinned" == "true" ]]; then
