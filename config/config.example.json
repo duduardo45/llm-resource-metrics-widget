@@ -1,0 +1,23 @@
+{
+  "url": "http://ai-brain:8080/#monitor",
+  "apiKey": "",
+  "width": 820,
+  "height": 540,
+  "zoom": 0.8,
+  "columns": 4,
+  "position": "top-right",
+  "margin": 24,
+  "pinOnOpen": true,
+  "browser": "chromium",
+  "profileDir": "~/.local/share/strata-monitor/chromium",
+  "extensionDir": "~/.local/share/strata-monitor/extension",
+  "controlPort": 8787,
+  "mini": {
+    "width": 360,
+    "height": 300,
+    "position": "top-right",
+    "margin": 24,
+    "pinOnOpen": true,
+    "profileDir": "~/.local/share/strata-monitor/chromium-mini"
+  }
+}

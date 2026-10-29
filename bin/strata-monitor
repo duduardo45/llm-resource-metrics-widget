@@ -1,0 +1,600 @@
+#!/usr/bin/env bash
+# strata-monitor - floating Strata monitor with normal and mini layouts.
+#
+# Usage:
+#   strata-monitor [open|toggle|pin|close|status|reload]
+#   strata-monitor --mini [open|toggle|pin|close|status|reload]
+#   strata-monitor switch          # normal <-> mini
+#   strata-monitor ctl-stop        # stop the local double-click server
+#
+# Config: ~/.config/strata-monitor/config.json
+set -euo pipefail
+
+SELF=$(readlink -f "$0")
+PROJECT_DIR=$(cd "$(dirname "$SELF")/.." && pwd)
+CONFIG="${STRATA_MONITOR_CONFIG:-$HOME/.config/strata-monitor/config.json}"
+BASE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/strata-monitor"
+mkdir -p "$BASE_STATE_DIR"
+
+VARIANT="max"
+if [[ "${1:-}" == "--mini" ]]; then
+  VARIANT="mini"
+  shift
+fi
+MODE="${1:-toggle}"
+
+if [[ ! -f "$CONFIG" ]]; then
+  echo "strata-monitor: config not found: $CONFIG" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------- config
+cfg_str_at() {
+  local value
+  value=$(jq -r "$1 // empty" "$CONFIG" 2>/dev/null || true)
+  printf '%s' "${value:-$2}"
+}
+
+cfg_num_at() {
+  local value
+  value=$(jq -r "if ($1) != null then ($1 | tonumber) else $2 end" "$CONFIG" 2>/dev/null || printf '%s' "$2")
+  printf '%s' "$value"
+}
+
+cfg_bool_at() {
+  local value
+  value=$(jq -r "if ($1) != null then ($1 == true) else $2 end" "$CONFIG" 2>/dev/null || printf '%s' "$2")
+  [[ "$value" == "true" ]]
+}
+
+expand_path() {
+  case "$1" in
+    "~/"*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+make_mini_url() {
+  local url="$1" base hash sep
+  base="${url%%#*}"
+  hash=""
+  [[ "$url" == *#* ]] && hash="#${url#*#}"
+  sep="?"
+  [[ "$base" == *\?* ]] && sep="&"
+  printf '%s%smini=1%s' "$base" "$sep" "${hash:-#monitor}"
+}
+
+API_URL=$(cfg_str_at '.url' 'http://ai-brain:8080/#monitor')
+API_KEY=$(cfg_str_at '.apiKey' '')
+BROWSER=$(cfg_str_at '.browser' 'chromium')
+EXT_DIR=$(expand_path "$(cfg_str_at '.extensionDir' '~/.local/share/strata-monitor/extension')")
+BASE_PROFILE=$(expand_path "$(cfg_str_at '.profileDir' '~/.local/share/strata-monitor/chromium')")
+CONTROL_PORT=$(cfg_num_at '.controlPort' 8787)
+CONTROL_URL="http://127.0.0.1:$CONTROL_PORT"
+CONTROL_PID_FILE="$BASE_STATE_DIR/control.pid"
+CONTROL_LOG="$BASE_STATE_DIR/control.log"
+MINI_GRAPH_FILE="$BASE_STATE_DIR/mini-graph"
+
+MAX_PIN=false
+cfg_bool_at '.pinOnOpen' false && MAX_PIN=true
+
+if [[ "$VARIANT" == "mini" ]]; then
+  WINDOW_TITLE="Strata Mini"
+  URL=$(make_mini_url "$API_URL")
+  WIDTH=$(cfg_num_at '.mini.width' 360)
+  HEIGHT=$(cfg_num_at '.mini.height' 300)
+  POSITION=$(cfg_str_at '.mini.position' "$(cfg_str_at '.position' 'top-right')")
+  MARGIN=$(cfg_num_at '.mini.margin' "$(cfg_num_at '.margin' 24)")
+  if jq -e '.mini | has("pinOnOpen")' "$CONFIG" >/dev/null 2>&1; then
+    PIN_ON_OPEN=false
+    cfg_bool_at '.mini.pinOnOpen' false && PIN_ON_OPEN=true
+  else
+    PIN_ON_OPEN=$MAX_PIN
+  fi
+  PROFILE_DIR=$(expand_path "$(cfg_str_at '.mini.profileDir' "${BASE_PROFILE}-mini")")
+  ZOOM=1
+  COLUMNS=1
+  STATE_SUFFIX="-mini"
+  LABEL="Strata mini"
+  ICON=$'\uf2d1'
+else
+  WINDOW_TITLE="Strata"
+  URL="$API_URL"
+  WIDTH=$(cfg_num_at '.width' 820)
+  HEIGHT=$(cfg_num_at '.height' 540)
+  POSITION=$(cfg_str_at '.position' 'top-right')
+  MARGIN=$(cfg_num_at '.margin' 24)
+  PIN_ON_OPEN=$MAX_PIN
+  PROFILE_DIR="$BASE_PROFILE"
+  ZOOM=$(cfg_num_at '.zoom' 1)
+  COLUMNS=$(cfg_num_at '.columns' 4)
+  STATE_SUFFIX=""
+  LABEL="Strata monitor"
+  ICON=$'\uf201'
+fi
+
+STATE_PINNED="$BASE_STATE_DIR/pinned$STATE_SUFFIX"
+SIG_FILE="$BASE_STATE_DIR/launch$STATE_SUFFIX.sig"
+BROWSER_PID_FILE="$BASE_STATE_DIR/browser$STATE_SUFFIX.pid"
+
+EXT_SOURCE_HASH=$(cat "$PROJECT_DIR"/extension/* 2>/dev/null | sha256sum | awk '{print $1}')
+SELF_HASH=$(sha256sum "$SELF" 2>/dev/null | awk '{print $1}')
+LAUNCH_SIG=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+  "$WINDOW_TITLE" "$URL" "$API_KEY" "$ZOOM" "$COLUMNS" "$CONTROL_URL" \
+  "$BROWSER" "$PROFILE_DIR" "$EXT_SOURCE_HASH" "$SELF_HASH" "$WIDTH" "$HEIGHT" "$POSITION:$MARGIN" |
+  sha256sum | awk '{print $1}')
+
+# ---------------------------------------------------------------- hyprland
+find_window_by_title() {
+  hyprctl clients -j 2>/dev/null | jq -r --arg t "$1" '
+    [.[] | select(.title == $t and (.class | test("^chrome-")))] | .[0].address // empty
+  ' 2>/dev/null || true
+}
+
+find_window() {
+  find_window_by_title "$WINDOW_TITLE"
+}
+
+window_json() {
+  hyprctl clients -j 2>/dev/null | jq -r --arg a "$1" '.[] | select(.address == $a)' 2>/dev/null || true
+}
+
+active_workspace() {
+  hyprctl activeworkspace -j 2>/dev/null | jq -r '.id' 2>/dev/null || printf '1'
+}
+
+active_window() {
+  hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty' 2>/dev/null || true
+}
+
+wait_for_address_close() {
+  local addr="$1"
+  for _ in $(seq 1 50); do
+    hyprctl clients -j 2>/dev/null | jq -e --arg a "$addr" '.[] | select(.address == $a)' >/dev/null 2>&1 || return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+close_window() {
+  local addr="$1" pid=""
+  [[ -z "$addr" ]] && return 0
+  pid=$(window_json "$addr" | jq -r '.pid // empty' 2>/dev/null || true)
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null 2>&1 || true
+  wait_for_address_close "$addr" || true
+  if [[ -n "$pid" ]]; then
+    # A dedicated Chromium profile can stay alive with no windows because the
+    # extension has a background context. Kill it so the next launch reloads
+    # the freshly generated key/UI configuration.
+    kill "$pid" 2>/dev/null || true
+    for pidfile in "$BASE_STATE_DIR"/browser*.pid; do
+      [[ -f "$pidfile" && "$(cat "$pidfile" 2>/dev/null)" == "$pid" ]] && rm -f "$pidfile"
+    done
+  fi
+  return 0
+}
+
+kill_saved_browser() {
+  local pid=""
+  [[ -f "$BROWSER_PID_FILE" ]] || return 0
+  pid=$(cat "$BROWSER_PID_FILE" 2>/dev/null || true)
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq -- "--user-data-dir=$PROFILE_DIR"; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.1
+      done
+    fi
+  fi
+  rm -f "$BROWSER_PID_FILE"
+}
+
+wait_for_window() {
+  local addr=""
+  for _ in $(seq 1 120); do
+    addr=$(find_window)
+    if [[ -n "$addr" ]]; then
+      printf '%s' "$addr"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+apply_geometry() {
+  local addr="$1" floating geo x y w h
+  floating=$(window_json "$addr" | jq -r '.floating // false')
+  if [[ "$floating" != "true" ]]; then
+    hyprctl dispatch "hl.dsp.window.float({ window = \"address:$addr\", action = \"toggle\" })" >/dev/null 2>&1 || true
+  fi
+
+  geo=$(hyprctl monitors -j 2>/dev/null | jq -r \
+    --arg pos "$POSITION" --argjson W "$WIDTH" --argjson H "$HEIGHT" --argjson m "$MARGIN" '
+      ([.[] | select(.focused)][0] // .[0]) as $mon |
+      ($mon.scale // 1) as $s |
+      ($mon.width / $s) as $mw |
+      ($mon.height / $s) as $mh |
+      (($mw - 2 * $m) | if . < 240 then 240 else . end) as $maxw |
+      (($mh - 80) | if . < 180 then 180 else . end) as $maxh |
+      ($W | if . > $maxw then $maxw else . end) as $w |
+      ($H | if . > $maxh then $maxh else . end) as $h |
+      (if ($pos | test("left$")) then $mon.x + $m else $mon.x + $mw - $w - $m end) as $x |
+      (if ($pos | test("^bottom")) then $mon.y + $mh - $h - $m else $mon.y + 40 end) as $y |
+      "\($x | floor) \($y | floor) \($w | floor) \($h | floor)"
+    ' 2>/dev/null || true)
+
+  if [[ -n "$geo" ]]; then
+    read -r x y w h <<< "$geo"
+    hyprctl dispatch "hl.dsp.window.resize({ window = \"address:$addr\", x = $w, y = $h })" >/dev/null 2>&1 || true
+    hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", x = $x, y = $y })" >/dev/null 2>&1 || true
+  fi
+}
+
+pin_window() {
+  local addr="$1"
+  hyprctl dispatch "hl.dsp.window.pin({ window = \"address:$addr\" })" >/dev/null 2>&1 || true
+}
+
+move_to_active() {
+  local addr="$1" ws
+  ws=$(active_workspace)
+  hyprctl dispatch "hl.dsp.window.move({ window = \"address:$addr\", workspace = $ws })" >/dev/null 2>&1 || true
+}
+
+focus_window() {
+  local addr="$1"
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------- extension
+ensure_extension() {
+  local key="$1" api_url="$2" zoom="$3" columns="$4" control_url="$5"
+  local origin control_origin key_js api_js zoom_js cols_js control_js
+  origin=$(printf '%s' "$api_url" | sed -E 's#^(https?://[^/]+).*#\1#')
+  control_origin=$(printf '%s' "$control_url" | sed -E 's#^(https?://[^/]+).*#\1#')
+
+  mkdir -p "$EXT_DIR"
+  cp "$PROJECT_DIR/extension/mini.html" "$EXT_DIR/mini.html"
+  cp "$PROJECT_DIR/extension/mini.css" "$EXT_DIR/mini.css"
+  cp "$PROJECT_DIR/extension/mini.js" "$EXT_DIR/mini.js"
+  cp "$PROJECT_DIR/extension/dblclick.js" "$EXT_DIR/dblclick.js"
+  rm -f "$EXT_DIR/seed.js"
+
+  local mini_graph mini_graph_js
+  key_js=$(printf '%s' "$key" | jq -Rs .)
+  api_js=$(printf '%s' "$api_url" | jq -Rs .)
+  control_js=$(printf '%s' "$control_url" | jq -Rs .)
+  zoom_js=$(jq -cn --arg z "$zoom" '$z')
+  cols_js=$(jq -cn --argjson c "$columns" '$c')
+  mini_graph=$(cat "$MINI_GRAPH_FILE" 2>/dev/null || echo 0)
+  [[ "$mini_graph" =~ ^[0-9]+$ ]] || mini_graph=0
+  mini_graph_js=$(jq -cn --argjson g "$mini_graph" '$g')
+
+  cat > "$EXT_DIR/config.js" <<EOF
+globalThis.STRATA_CONFIG = {
+  apiUrl: $api_js,
+  apiKey: $key_js,
+  controlUrl: $control_js,
+  zoom: $zoom_js,
+  columns: $cols_js,
+  miniGraph: $mini_graph_js,
+};
+try {
+  localStorage.setItem("strata.apikey", JSON.stringify($key_js));
+} catch (e) {}
+try {
+  if (!new URLSearchParams(location.search).has("mini")) {
+    document.documentElement.style.zoom = $zoom_js;
+    var st = document.createElement("style");
+    st.textContent = ".metrics{grid-template-columns:repeat(" + $cols_js + ",minmax(0,1fr))!important}" +
+      ".st-metric__spark .speed-prefill{color:#7cc4ff!important}" +
+      ".speed-values > div:first-child .st-metric__value{color:#6ee7a8!important}" +
+      ".speed-values > div:last-child .st-metric__value{color:#7cc4ff!important}" +
+      "@media (prefers-color-scheme: light){" +
+      ".st-metric__spark .speed-prefill{color:#1c6fb8!important}" +
+      ".speed-values > div:first-child .st-metric__value{color:#087f5b!important}" +
+      ".speed-values > div:last-child .st-metric__value{color:#1c6fb8!important}" +
+      "}";
+    (document.head || document.documentElement).appendChild(st);
+  }
+} catch (e) {}
+EOF
+
+  jq -n --arg origin "$origin" --arg control "$control_origin" '{
+    manifest_version: 3,
+    name: "Strata floating monitor",
+    version: "1.0.0",
+    description: "Seeds the Strata API key and provides the floating mini monitor UI.",
+    host_permissions: [($origin + "/*"), ($control + "/*")],
+    content_scripts: [{
+      matches: [($origin + "/*")],
+      js: ["config.js", "dblclick.js", "mini.js"],
+      css: ["mini.css"],
+      run_at: "document_start"
+    }],
+    web_accessible_resources: [{
+      resources: ["mini.html"],
+      matches: [($origin + "/*")]
+    }]
+  }' > "$EXT_DIR/manifest.json"
+
+  chmod 700 "$EXT_DIR" 2>/dev/null || true
+  chmod 600 "$EXT_DIR/config.js" "$EXT_DIR/manifest.json" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------- control server
+ensure_control_server() {
+  if curl -fsS --max-time 0.5 "$CONTROL_URL/health" 2>/dev/null | grep -q 'strata-monitor-ctl v2'; then
+    return 0
+  fi
+  if [[ -f "$CONTROL_PID_FILE" ]]; then
+    local oldpid
+    oldpid=$(cat "$CONTROL_PID_FILE" 2>/dev/null || true)
+    [[ -n "$oldpid" ]] && kill "$oldpid" 2>/dev/null || true
+    rm -f "$CONTROL_PID_FILE"
+  fi
+  setsid "$PROJECT_DIR/bin/strata-monitor-ctl" \
+    --port "$CONTROL_PORT" --script "$SELF" --pidfile "$CONTROL_PID_FILE" \
+    --graphfile "$MINI_GRAPH_FILE" >>"$CONTROL_LOG" 2>&1 &
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 0.5 "$CONTROL_URL/health" 2>/dev/null | grep -q 'strata-monitor-ctl v2'; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+stop_control_server() {
+  if [[ -f "$CONTROL_PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$CONTROL_PID_FILE" 2>/dev/null || true)
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+    rm -f "$CONTROL_PID_FILE"
+  fi
+}
+
+# ---------------------------------------------------------------- launch
+launch_window() {
+  local force_pin="${1:-false}" addr want_pinned=false pid=""
+  ensure_extension "$API_KEY" "$API_URL" "$ZOOM" "$COLUMNS" "$CONTROL_URL"
+  ensure_control_server || true
+  mkdir -p "$PROFILE_DIR"
+  kill_saved_browser
+
+  setsid "$BROWSER" \
+    --user-data-dir="$PROFILE_DIR" \
+    --load-extension="$EXT_DIR" \
+    --no-first-run \
+    --no-default-browser-check \
+    --app="$URL" \
+    --window-size="$WIDTH,$HEIGHT" \
+    >/dev/null 2>&1 &
+
+  if ! addr=$(wait_for_window); then
+    echo "strata-monitor: $LABEL window did not appear" >&2
+    return 1
+  fi
+
+  apply_geometry "$addr"
+  pid=$(window_json "$addr" | jq -r '.pid // empty' 2>/dev/null || true)
+  [[ -n "$pid" ]] && printf '%s\n' "$pid" > "$BROWSER_PID_FILE"
+  printf '%s\n' "$LAUNCH_SIG" > "$SIG_FILE"
+
+  if [[ "$force_pin" == "true" ]]; then
+    want_pinned=true
+  elif [[ -f "$STATE_PINNED" ]]; then
+    [[ "$(cat "$STATE_PINNED")" == "1" ]] && want_pinned=true
+  elif [[ "$PIN_ON_OPEN" == "true" ]]; then
+    want_pinned=true
+  fi
+
+  if [[ "$want_pinned" == "true" ]]; then
+    pin_window "$addr"
+    printf '1\n' > "$STATE_PINNED"
+  else
+    printf '0\n' > "$STATE_PINNED"
+  fi
+
+  printf '%s' "$addr"
+}
+
+maybe_reload_for_config() {
+  local addr="$1"
+  [[ -z "$addr" || ! -f "$SIG_FILE" ]] && return 0
+  if [[ "$(cat "$SIG_FILE")" != "$LAUNCH_SIG" ]]; then
+    close_window "$addr"
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------- status
+mini_bar_json() {
+  local graph_index label api_base metrics_url json text
+  graph_index=$(cat "$MINI_GRAPH_FILE" 2>/dev/null || echo 0)
+  [[ "$graph_index" =~ ^[0-9]+$ ]] || graph_index=0
+  (( graph_index > 7 )) && graph_index=0
+  case "$graph_index" in
+    0) label="Speed" ;;
+    1) label="GPU load" ;;
+    2) label="VRAM" ;;
+    3) label="GPU temp" ;;
+    4) label="Power" ;;
+    5) label="PCIe" ;;
+    6) label="CPU" ;;
+    7) label="Disk read" ;;
+    *) label="Speed" ;;
+  esac
+
+  api_base="${API_URL%%#*}"
+  metrics_url="${api_base%/}/metrics"
+  json=$(curl -fsS --max-time 1 -H "Authorization: Bearer $API_KEY" "$metrics_url" 2>/dev/null || true)
+  [[ -z "$json" ]] && return 1
+
+  text=$(printf '%s' "$json" | jq -r --argjson idx "$graph_index" '
+    def d0: if . == null then "\u2013" else (round | tostring) end;
+    def d1: if . == null then "\u2013" else (((. * 10) | round / 10) | tostring) end;
+    def d2: if . == null then "\u2013" else (((. * 100) | round / 100) | tostring) end;
+    . as $m |
+    ($m.live // {}) as $live |
+    ($m.hardware // {}) as $hw |
+    ($m.requests[0] // {}) as $last |
+    [
+      (((if $live.state == "generating" then $live.tok_s else $last.decode_tok_s end) | d1) + " t/s"),
+      (($hw.gpu_util | d0) + "%"),
+      ((($hw.gpu_mem_used / 1073741824) | d1) + " GB"),
+      (($hw.gpu_temp | d0) + " \u00b0C"),
+      (($hw.gpu_power | d0) + " W"),
+      (($hw.gpu_pcie_rx_mb | if . == null then "\u2013" elif . < 10 then d1 else d0 end) + " MB/s"),
+      (($hw.cpu | d0) + "%"),
+      (if ($hw.disk_read_mb // 0) >= 1000 then ((($hw.disk_read_mb / 1024) | d2) + " GB/s") else (($hw.disk_read_mb | if . == null then "\u2013" elif . < 10 then d1 else d0 end) + " MB/s") end)
+    ] | .[$idx] // empty
+  ' 2>/dev/null || true)
+  [[ -z "$text" ]] && return 1
+
+  jq -cn --arg text "$text" --arg tooltip "$LABEL — $label $text (closed)" --arg class ""     '{text:$text, tooltip:$tooltip, class:$class}'
+}
+
+print_status() {
+  local addr="$1" pinned=false tooltip class="" text="$ICON"
+  if [[ "$VARIANT" == "mini" && -z "$addr" ]]; then
+    if mini_bar_json; then
+      return 0
+    fi
+  fi
+  if [[ -z "$addr" ]]; then
+    tooltip="$LABEL — closed"
+  else
+    pinned=$(window_json "$addr" | jq -r '.pinned // false')
+    if [[ "$pinned" == "true" ]]; then
+      tooltip="$LABEL — pinned (left: hide, right: unpin)"
+      class="active"
+    else
+      tooltip="$LABEL — open (left: focus, right: pin)"
+      class=""
+    fi
+  fi
+  jq -cn --arg text "$text" --arg tooltip "$tooltip" --arg class "$class" \
+    '{text:$text, tooltip:$tooltip, class:$class}'
+}
+
+# ---------------------------------------------------------------- switch
+switch_variant() {
+  local max_addr mini_addr active source target target_suffix source_addr source_pinned
+  max_addr=$(find_window_by_title "Strata")
+  mini_addr=$(find_window_by_title "Strata Mini")
+  active=$(active_window)
+
+  if [[ -n "$active" && "$active" == "$max_addr" ]]; then
+    source="max"; source_addr="$max_addr"
+  elif [[ -n "$active" && "$active" == "$mini_addr" ]]; then
+    source="mini"; source_addr="$mini_addr"
+  elif [[ -n "$mini_addr" ]]; then
+    source="mini"; source_addr="$mini_addr"
+  elif [[ -n "$max_addr" ]]; then
+    source="max"; source_addr="$max_addr"
+  else
+    exec "$SELF" open
+  fi
+
+  source_pinned=$(window_json "$source_addr" | jq -r '.pinned // false')
+  if [[ "$source" == "max" ]]; then
+    target="mini"; target_suffix="-mini"
+  else
+    target="max"; target_suffix=""
+  fi
+  if [[ "$source_pinned" == "true" ]]; then
+    printf '1\n' > "$BASE_STATE_DIR/pinned$target_suffix"
+  else
+    printf '0\n' > "$BASE_STATE_DIR/pinned$target_suffix"
+  fi
+
+  close_window "$source_addr"
+
+  if [[ "$target" == "mini" ]]; then
+    exec "$SELF" --mini open
+  else
+    exec "$SELF" open
+  fi
+}
+
+# ---------------------------------------------------------------- modes
+case "$MODE" in
+  status|open|toggle|pin|close|reload|switch|ctl-stop) ;;
+  *)
+    echo "Usage: strata-monitor [--mini] {open|toggle|pin|close|status|reload|switch|ctl-stop}" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$MODE" == "switch" ]]; then
+  switch_variant
+fi
+
+if [[ "$MODE" == "ctl-stop" ]]; then
+  stop_control_server
+  exit 0
+fi
+
+addr=$(find_window)
+if [[ -n "$addr" && "$MODE" != "close" && "$MODE" != "status" ]]; then
+  if ! maybe_reload_for_config "$addr"; then
+    addr=""
+  fi
+fi
+
+case "$MODE" in
+  status)
+    print_status "$addr"
+    ;;
+  reload)
+    close_window "$addr"
+    launch_window false >/dev/null
+    ;;
+  close)
+    close_window "$addr"
+    ;;
+  open)
+    if [[ -z "$addr" ]]; then
+      launch_window false >/dev/null
+    else
+      pinned=$(window_json "$addr" | jq -r '.pinned // false')
+      if [[ "$pinned" != "true" ]]; then
+        cur_ws=$(window_json "$addr" | jq -r '.workspace.id // 0')
+        [[ "$cur_ws" != "$(active_workspace)" ]] && move_to_active "$addr"
+      fi
+      focus_window "$addr"
+    fi
+    ;;
+  toggle)
+    if [[ -z "$addr" ]]; then
+      launch_window false >/dev/null
+    else
+      pinned=$(window_json "$addr" | jq -r '.pinned // false')
+      cur_ws=$(window_json "$addr" | jq -r '.workspace.id // 0')
+      if [[ "$pinned" == "true" || "$cur_ws" == "$(active_workspace)" ]]; then
+        close_window "$addr"
+      else
+        move_to_active "$addr"
+        focus_window "$addr"
+      fi
+    fi
+    ;;
+  pin)
+    if [[ -z "$addr" ]]; then
+      launch_window true >/dev/null
+    else
+      pinned=$(window_json "$addr" | jq -r '.pinned // false')
+      move_to_active "$addr"
+      pin_window "$addr"
+      if [[ "$pinned" == "true" ]]; then
+        printf '0\n' > "$STATE_PINNED"
+      else
+        printf '1\n' > "$STATE_PINNED"
+      fi
+    fi
+    ;;
+esac
