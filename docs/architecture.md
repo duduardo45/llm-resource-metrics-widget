@@ -1,81 +1,68 @@
 # Architecture
 
-The project separates "what data to show" from "where it is shown". Strata is
-the first provider, but the application and bar adapters do not know Strata.
+The project separates "what a graph is and what data it shows" from "where it
+is drawn" and from "which external monitor provides the data".
 
 ```
-┌──────────────────────────────┐   ┌──────────────────────────┐
-│ bar/omarchy (Quickshell)     │   │ bar/waybar               │
-│  command module              │   │  custom module           │
-└──────────────┬───────────────┘   └────────────┬─────────────┘
-               │                                │
-               └──────────────┬─────────────────┘
-                              ▼
-                    bin/monitor-dock
-              application / CLI / JSON shaping
-                              │
-                              ▼
-              providers/<name>/provider.sh
-                    provider contract
-                              │
-                              ▼
-              providers/strata/engine.sh
-          Strata use cases + infrastructure
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-     Hyprland             Chromium           Strata /metrics
-     window rules         extension/UI       HTTP API
+src/presentation/bars/{omarchy,waybar}   presentation adapters
+                 │
+src/presentation/cli/monitor-dock        application / CLI / JSON shaping
+                 │
+src/core/providers (contract)             core boundary
+                 │
+src/infrastructure/providers/<name>       provider adapters
+                 │
+src/infrastructure/providers/strata/      Strata use cases + engine
+                 │
+   Hyprland | Chromium | Strata /metrics  external systems
+
+src/core/graphs/*.js                     one class per graph
+                 │
+src/presentation/mini/*.js               Sparkline / StateView / MiniView
 ```
 
 ## Layer responsibilities
 
-### 1. Presentation adapters (`bar/`)
+### Core (`src/core`)
 
-- Translate bar events into `monitor-dock` calls.
-- Translate the normalized JSON into the bar's own schema.
-- Own no provider logic.
+- `graphs/graph.js` — the `Graph` base class.
+- `graphs/<name>-graph.js` — one class per graph: metadata, series name,
+  current value extraction, formatting, unit, max, and sub-label.
+- `graphs/index.js` — the ordered graph registry. Its order is part of the
+  saved mini-index and closed-bar contract.
+- `format.js` — number/GB formatting shared by graphs.
+- `providers/README.md` — the provider contract.
 
-Omarchy command modules and Waybar custom modules both accept the same
-status shape, so the only difference is the configuration syntax.
+Graph classes never touch the DOM. They are the single source of truth for the
+mini dashboard and for the closed-window bar value.
 
-### 2. Application (`bin/monitor-dock`)
+### Presentation (`src/presentation`)
 
-- Resolve `--provider` and the provider's default target.
-- Dispatch `status` and lifecycle actions.
-- Validate provider status JSON and emit a stable, bar-neutral object.
-- Provide `providers` and `targets` introspection.
+- `cli/monitor-dock` — bar-agnostic application/primary adapter. Resolves a
+  provider and target, validates status JSON, dispatches actions.
+- `cli/strata-monitor` — compatibility wrapper for the old CLI.
+- `mini/index.html`, `mini.css`, `main.js`, `mini-view.js`, `sparkline.js`,
+  `state-view.js` — the local mini dashboard. It is served by the control
+  server and uses native ES modules.
+- `bars/omarchy/` and `bars/waybar/` — thin bar configuration snippets.
 
-It intentionally does not know about Hyprland, Chromium, Strata, or any bar.
+### Infrastructure (`src/infrastructure`)
 
-### 3. Provider contract (`providers/<name>/provider.sh`)
+- `providers/strata/provider.sh` — maps the provider contract to the Strata
+  engine.
+- `providers/strata/engine.sh` — Strata config, target selection, Chromium
+  profiles/extension generation, Hyprland operations, and the closed-bar
+  value.
+- `providers/strata/graph-value.js` — Node adapter that formats the selected
+  graph for the closed mini bar entry by importing the core graph classes.
+- `control/strata-monitor-ctl` — localhost server that serves `/mini` and
+  `/src/...`, proxies `/metrics`, handles `/switch`, and stores `/graph`.
+- `chromium/content/dblclick.js` — content script for the normal Strata page.
+- `hyprland/strata.lua` — floating/opacity/pin rules.
+- `providers/example/provider.sh` — annotated provider template.
 
-- `targets` describes what the provider can display.
-- `status <target>` returns the normalized status object.
-- `open|toggle|pin|close|reload|switch` map to the provider's actions.
-
-Adding a provider is a new directory plus a small adapter. The application and
-bar adapters do not change.
-
-### 4. Provider implementation (`providers/strata/engine.sh`)
-
-The Strata engine owns:
-
-- config loading and target selection (normal/mini),
-- Strata metric formatting for the closed mini bar value,
-- Chromium profile/extension generation,
-- Hyprland window operations,
-- the localhost control server.
-
-This is allowed to be provider-specific and imperative. If it grows, the
-Hyprland and Chromium parts can move into `lib/` without changing the provider
-contract.
-
-### 5. UI / infrastructure adapters
-
-- `extension/` is a Chromium content-script UI adapter for the Strata page.
-- `hypr/strata.lua` is a Hyprland adapter (floating, opacity, pinning).
-- `bin/strata-monitor-ctl` is a transport adapter for page-to-shell actions.
+The Strata provider is allowed to be imperative. A different provider can use
+any language or transport behind the same provider contract.
 
 ## Normalized status shape
 
@@ -89,24 +76,43 @@ contract.
 }
 ```
 
-`text` is required. The other fields are optional. This is a subset of
-Waybar's custom-module JSON and is also understood by the Omarchy command
-module (`class: "active"` highlights the pinned state).
+`text` is required. This is a subset of Waybar's custom-module JSON and is also
+understood by the Omarchy command module (`class: "active"` highlights the
+pinned state).
+
+## Graph class contract
+
+```js
+class SpeedGraph extends Graph {
+  constructor() {
+    super({ id: "speed", label: "Speed", series: "tok_s", unit: "t/s", dual: true });
+    this.prefillSeries = "prefill_tok_s_mean";
+  }
+
+  value(data) { /* decode value */ }
+  prefillValue(data) { /* prefill value */ }
+  format(value) { /* display formatting */ }
+  sub(data) { /* footer context */ }
+}
+```
+
+Rendering is handled by `Sparkline` and `MiniView`; the graph class only
+decides *what* is rendered. The bar formatter (`graph-value.js`) uses the same
+class, so the bar value and the mini window cannot drift apart.
 
 ## Why this stays extensible
 
 - A new resource monitor implements the provider contract and gets both bars
   for free.
 - A new bar implements a small adapter and gets every provider for free.
-- Lifecycle actions are provider-defined behind a fixed vocabulary.
-- The application layer has no hard-coded Strata 2 (or any future monitor)
-  assumptions.
+- A new graph is one class plus one line in `graphs/index.js`.
+- The application layer has no Strata-specific assumptions.
 
 ## Future cleanups
 
-- Extract `lib/hyprland.sh` and `lib/chromium.sh` from the Strata engine when a
+- Move the Hyprland and Chromium helpers from the Strata engine into
+  `src/infrastructure/hyprland/` and `src/infrastructure/chromium/` when a
   second window-based provider needs them.
 - Add a provider integration test harness that runs the contract against every
-  `providers/*/provider.sh`.
-- Add an optional `monitor-dock doctor` command that reports provider health and
-  missing dependencies.
+  `provider.sh`.
+- Add `monitor-dock doctor` for provider health and missing dependencies.

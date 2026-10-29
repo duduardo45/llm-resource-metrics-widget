@@ -1,6 +1,6 @@
 # Bar adapters
 
-The application layer is `bin/monitor-dock`; bar adapters are intentionally
+The application layer is `src/presentation/cli/monitor-dock`; bar adapters are intentionally
 thin and only know the provider contract.
 
 | Bar | Adapter | Installation |
@@ -19,6 +19,6 @@ the normal window to switch back. You can also use `monitor-dock open` or
 
 ## Swapping monitors
 
-Change `--provider strata` to another provider from `providers/`. The bar
+Change `--provider strata` to another provider from `src/infrastructure/providers/`. The bar
 adapter does not need to know whether the source is Strata, nvidia-smi, btop,
 Prometheus, or anything else.

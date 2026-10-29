@@ -1,7 +1,7 @@
 # Waybar adapter
 
 Waybar uses the same normalized JSON as the Omarchy module. The application
-layer (`monitor-dock`) and provider layer (`providers/strata`) do not change.
+layer (`monitor-dock`) and provider layer (`src/infrastructure/providers/strata`) do not change.
 
 1. Add the module from `config.jsonc` to `~/.config/waybar/config.jsonc`.
 2. Add `"custom/strata-mini"` to the `modules-right` array of the bar you use.

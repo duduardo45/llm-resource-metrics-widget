@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SELF=$(readlink -f "$0")
-PROJECT_DIR=$(cd "$(dirname "$SELF")/../.." && pwd)
+SRC_DIR=$(cd "$(dirname "$SELF")/../../.." && pwd)
 CONFIG="${STRATA_MONITOR_CONFIG:-$HOME/.config/strata-monitor/config.json}"
 BASE_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/strata-monitor"
 mkdir -p "$BASE_STATE_DIR"
@@ -54,16 +54,6 @@ expand_path() {
   esac
 }
 
-make_mini_url() {
-  local url="$1" base hash sep
-  base="${url%%#*}"
-  hash=""
-  [[ "$url" == *#* ]] && hash="#${url#*#}"
-  sep="?"
-  [[ "$base" == *\?* ]] && sep="&"
-  printf '%s%smini=1%s' "$base" "$sep" "${hash:-#monitor}"
-}
-
 API_URL=$(cfg_str_at '.url' 'http://ai-brain:8080/#monitor')
 API_KEY=$(cfg_str_at '.apiKey' '')
 BROWSER=$(cfg_str_at '.browser' 'chromium')
@@ -80,7 +70,7 @@ cfg_bool_at '.pinOnOpen' false && MAX_PIN=true
 
 if [[ "$VARIANT" == "mini" ]]; then
   WINDOW_TITLE="Strata Mini"
-  URL=$(make_mini_url "$API_URL")
+  URL="$CONTROL_URL/mini"
   WIDTH=$(cfg_num_at '.mini.width' 360)
   HEIGHT=$(cfg_num_at '.mini.height' 300)
   POSITION=$(cfg_str_at '.mini.position' "$(cfg_str_at '.position' 'top-right')")
@@ -117,11 +107,13 @@ STATE_PINNED="$BASE_STATE_DIR/pinned$STATE_SUFFIX"
 SIG_FILE="$BASE_STATE_DIR/launch$STATE_SUFFIX.sig"
 BROWSER_PID_FILE="$BASE_STATE_DIR/browser$STATE_SUFFIX.pid"
 
-EXT_SOURCE_HASH=$(cat "$PROJECT_DIR"/extension/* 2>/dev/null | sha256sum | awk '{print $1}')
+EXT_SOURCE_HASH=$(cat "$SRC_DIR"/infrastructure/chromium/content/* 2>/dev/null | sha256sum | awk '{print $1}')
+MINI_SOURCE_HASH=$(find "$SRC_DIR/core" "$SRC_DIR/presentation/mini" -type f -print0 2>/dev/null |
+  sort -z | xargs -0 cat 2>/dev/null | sha256sum | awk '{print $1}')
 SELF_HASH=$(sha256sum "$SELF" 2>/dev/null | awk '{print $1}')
-LAUNCH_SIG=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+LAUNCH_SIG=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
   "$WINDOW_TITLE" "$URL" "$API_KEY" "$ZOOM" "$COLUMNS" "$CONTROL_URL" \
-  "$BROWSER" "$PROFILE_DIR" "$EXT_SOURCE_HASH" "$SELF_HASH" "$WIDTH" "$HEIGHT" "$POSITION:$MARGIN" |
+  "$BROWSER" "$PROFILE_DIR" "$EXT_SOURCE_HASH" "$MINI_SOURCE_HASH" "$SELF_HASH" "$WIDTH" "$HEIGHT" "$POSITION:$MARGIN" |
   sha256sum | awk '{print $1}')
 
 # ---------------------------------------------------------------- hyprland
@@ -256,21 +248,14 @@ ensure_extension() {
   control_origin=$(printf '%s' "$control_url" | sed -E 's#^(https?://[^/]+).*#\1#')
 
   mkdir -p "$EXT_DIR"
-  cp "$PROJECT_DIR/extension/mini.html" "$EXT_DIR/mini.html"
-  cp "$PROJECT_DIR/extension/mini.css" "$EXT_DIR/mini.css"
-  cp "$PROJECT_DIR/extension/mini.js" "$EXT_DIR/mini.js"
-  cp "$PROJECT_DIR/extension/dblclick.js" "$EXT_DIR/dblclick.js"
-  rm -f "$EXT_DIR/seed.js"
+  cp "$SRC_DIR/infrastructure/chromium/content/dblclick.js" "$EXT_DIR/dblclick.js"
+  rm -f "$EXT_DIR/seed.js" "$EXT_DIR/mini.html" "$EXT_DIR/mini.css" "$EXT_DIR/mini.js"
 
-  local mini_graph mini_graph_js
   key_js=$(printf '%s' "$key" | jq -Rs .)
   api_js=$(printf '%s' "$api_url" | jq -Rs .)
   control_js=$(printf '%s' "$control_url" | jq -Rs .)
   zoom_js=$(jq -cn --arg z "$zoom" '$z')
   cols_js=$(jq -cn --argjson c "$columns" '$c')
-  mini_graph=$(cat "$MINI_GRAPH_FILE" 2>/dev/null || echo 0)
-  [[ "$mini_graph" =~ ^[0-9]+$ ]] || mini_graph=0
-  mini_graph_js=$(jq -cn --argjson g "$mini_graph" '$g')
 
   cat > "$EXT_DIR/config.js" <<EOF
 globalThis.STRATA_CONFIG = {
@@ -279,32 +264,23 @@ globalThis.STRATA_CONFIG = {
   controlUrl: $control_js,
   zoom: $zoom_js,
   columns: $cols_js,
-  miniGraph: $mini_graph_js,
 };
 try {
   localStorage.setItem("strata.apikey", JSON.stringify($key_js));
 } catch (e) {}
 try {
-  if (new URLSearchParams(location.search).has("mini")) {
-    // Set an opaque background before the first paint so Chromium creates an
-    // opaque Wayland surface (otherwise inactive-window compositing can show
-    // the desktop through the mini panel).
-    document.documentElement.style.setProperty("background-color", "#141518", "important");
-    document.documentElement.style.colorScheme = "dark";
-  } else {
-    document.documentElement.style.zoom = $zoom_js;
-    var st = document.createElement("style");
-    st.textContent = ".metrics{grid-template-columns:repeat(" + $cols_js + ",minmax(0,1fr))!important}" +
-      ".st-metric__spark .speed-prefill{color:#7cc4ff!important}" +
-      ".speed-values > div:first-child .st-metric__value{color:#6ee7a8!important}" +
-      ".speed-values > div:last-child .st-metric__value{color:#7cc4ff!important}" +
-      "@media (prefers-color-scheme: light){" +
-      ".st-metric__spark .speed-prefill{color:#1c6fb8!important}" +
-      ".speed-values > div:first-child .st-metric__value{color:#087f5b!important}" +
-      ".speed-values > div:last-child .st-metric__value{color:#1c6fb8!important}" +
-      "}";
-    (document.head || document.documentElement).appendChild(st);
-  }
+  document.documentElement.style.zoom = $zoom_js;
+  var st = document.createElement("style");
+  st.textContent = ".metrics{grid-template-columns:repeat(" + $cols_js + ",minmax(0,1fr))!important}" +
+    ".st-metric__spark .speed-prefill{color:#7cc4ff!important}" +
+    ".speed-values > div:first-child .st-metric__value{color:#6ee7a8!important}" +
+    ".speed-values > div:last-child .st-metric__value{color:#7cc4ff!important}" +
+    "@media (prefers-color-scheme: light){" +
+    ".st-metric__spark .speed-prefill{color:#1c6fb8!important}" +
+    ".speed-values > div:first-child .st-metric__value{color:#087f5b!important}" +
+    ".speed-values > div:last-child .st-metric__value{color:#1c6fb8!important}" +
+    "}";
+  (document.head || document.documentElement).appendChild(st);
 } catch (e) {}
 EOF
 
@@ -312,17 +288,12 @@ EOF
     manifest_version: 3,
     name: "Strata floating monitor",
     version: "1.0.0",
-    description: "Seeds the Strata API key and provides the floating mini monitor UI.",
+    description: "Seeds the Strata API key and opens the floating normal layout.",
     host_permissions: [($origin + "/*"), ($control + "/*")],
     content_scripts: [{
       matches: [($origin + "/*")],
-      js: ["config.js", "dblclick.js", "mini.js"],
-      css: ["mini.css"],
+      js: ["config.js", "dblclick.js"],
       run_at: "document_start"
-    }],
-    web_accessible_resources: [{
-      resources: ["mini.html"],
-      matches: [($origin + "/*")]
     }]
   }' > "$EXT_DIR/manifest.json"
 
@@ -332,7 +303,7 @@ EOF
 
 # ---------------------------------------------------------------- control server
 ensure_control_server() {
-  if curl -fsS --max-time 0.5 "$CONTROL_URL/health" 2>/dev/null | grep -q 'strata-monitor-ctl v2'; then
+  if curl -fsS --max-time 0.5 "$CONTROL_URL/health" 2>/dev/null | grep -q 'strata-monitor-ctl v3'; then
     return 0
   fi
   if [[ -f "$CONTROL_PID_FILE" ]]; then
@@ -341,11 +312,12 @@ ensure_control_server() {
     [[ -n "$oldpid" ]] && kill "$oldpid" 2>/dev/null || true
     rm -f "$CONTROL_PID_FILE"
   fi
-  setsid "$PROJECT_DIR/bin/strata-monitor-ctl" \
+  setsid "$SRC_DIR/infrastructure/control/strata-monitor-ctl" \
     --port "$CONTROL_PORT" --script "$SELF" --pidfile "$CONTROL_PID_FILE" \
-    --graphfile "$MINI_GRAPH_FILE" >>"$CONTROL_LOG" 2>&1 &
+    --graphfile "$MINI_GRAPH_FILE" --root "$SRC_DIR" --config "$CONFIG" \
+    >>"$CONTROL_LOG" 2>&1 &
   for _ in $(seq 1 30); do
-    if curl -fsS --max-time 0.5 "$CONTROL_URL/health" 2>/dev/null | grep -q 'strata-monitor-ctl v2'; then
+    if curl -fsS --max-time 0.5 "$CONTROL_URL/health" 2>/dev/null | grep -q 'strata-monitor-ctl v3'; then
       return 0
     fi
     sleep 0.1
@@ -420,49 +392,26 @@ maybe_reload_for_config() {
 
 # ---------------------------------------------------------------- status
 mini_bar_json() {
-  local graph_index label api_base metrics_url json text
+  local graph_index api_base metrics_url json graph_output label text
   graph_index=$(cat "$MINI_GRAPH_FILE" 2>/dev/null || echo 0)
   [[ "$graph_index" =~ ^[0-9]+$ ]] || graph_index=0
   (( graph_index > 7 )) && graph_index=0
-  case "$graph_index" in
-    0) label="Speed" ;;
-    1) label="GPU load" ;;
-    2) label="VRAM" ;;
-    3) label="GPU temp" ;;
-    4) label="Power" ;;
-    5) label="PCIe" ;;
-    6) label="CPU" ;;
-    7) label="Disk read" ;;
-    *) label="Speed" ;;
-  esac
 
   api_base="${API_URL%%#*}"
   metrics_url="${api_base%/}/metrics"
   json=$(curl -fsS --max-time 1 -H "Authorization: Bearer $API_KEY" "$metrics_url" 2>/dev/null || true)
   [[ -z "$json" ]] && return 1
 
-  text=$(printf '%s' "$json" | jq -r --argjson idx "$graph_index" '
-    def d0: if . == null then "\u2013" else (round | tostring) end;
-    def d1: if . == null then "\u2013" else (((. * 10) | round / 10) | tostring) end;
-    def d2: if . == null then "\u2013" else (((. * 100) | round / 100) | tostring) end;
-    . as $m |
-    ($m.live // {}) as $live |
-    ($m.hardware // {}) as $hw |
-    ($m.requests[0] // {}) as $last |
-    [
-      (((if $live.state == "generating" then $live.tok_s else $last.decode_tok_s end) | d1) + " t/s"),
-      (($hw.gpu_util | d0) + "%"),
-      ((($hw.gpu_mem_used / 1073741824) | d1) + " GB"),
-      (($hw.gpu_temp | d0) + " \u00b0C"),
-      (($hw.gpu_power | d0) + " W"),
-      (($hw.gpu_pcie_rx_mb | if . == null then "\u2013" elif . < 10 then d1 else d0 end) + " MB/s"),
-      (($hw.cpu | d0) + "%"),
-      (if ($hw.disk_read_mb // 0) >= 1000 then ((($hw.disk_read_mb / 1024) | d2) + " GB/s") else (($hw.disk_read_mb | if . == null then "\u2013" elif . < 10 then d1 else d0 end) + " MB/s") end)
-    ] | .[$idx] // empty
-  ' 2>/dev/null || true)
-  [[ -z "$text" ]] && return 1
+  # The graph classes are the single source of truth for the mini UI and the
+  # closed-window bar value.
+  graph_output=$(printf '%s' "$json" | node "$SRC_DIR/infrastructure/providers/strata/graph-value.js" "$graph_index" 2>/dev/null || true)
+  [[ -z "$graph_output" ]] && return 1
+  label=${graph_output%%$'\t'*}
+  text=${graph_output#*$'\t'}
+  [[ -z "$text" || "$text" == "$graph_output" ]] && return 1
 
-  jq -cn --arg text "$text" --arg tooltip "$LABEL — $label $text (closed)" --arg class ""     '{text:$text, tooltip:$tooltip, class:$class}'
+  jq -cn --arg text "$text" --arg tooltip "$LABEL — $label $text (closed)" --arg class "" \
+    '{text:$text, tooltip:$tooltip, class:$class}'
 }
 
 print_status() {

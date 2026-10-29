@@ -10,13 +10,18 @@ HYPR_DIR="$HOME/.config/hypr"
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
 
 mkdir -p "$BIN_DIR" "$CONFIG_DIR" "${XDG_STATE_HOME:-$HOME/.local/state}/strata-monitor"
-chmod +x "$REPO/bin/monitor-dock" "$REPO/bin/strata-monitor" "$REPO/bin/strata-monitor-ctl" \
-  "$REPO/providers/strata/provider.sh" "$REPO/providers/strata/engine.sh" "$REPO/providers/example/provider.sh"
+chmod +x "$REPO/src/presentation/cli/monitor-dock" \
+  "$REPO/src/presentation/cli/strata-monitor" \
+  "$REPO/src/infrastructure/providers/strata/graph-value.js" \
+  "$REPO/src/infrastructure/control/strata-monitor-ctl" \
+  "$REPO/src/infrastructure/providers/strata/provider.sh" \
+  "$REPO/src/infrastructure/providers/strata/engine.sh" \
+  "$REPO/src/infrastructure/providers/example/provider.sh"
 chmod 700 "$CONFIG_DIR" "${XDG_STATE_HOME:-$HOME/.local/state}/strata-monitor" 2>/dev/null || true
 
-ln -sfn "$REPO/bin/monitor-dock" "$BIN_DIR/monitor-dock"
-ln -sfn "$REPO/bin/strata-monitor" "$BIN_DIR/strata-monitor"
-ln -sfn "$REPO/bin/strata-monitor-ctl" "$BIN_DIR/strata-monitor-ctl"
+ln -sfn "$REPO/src/presentation/cli/monitor-dock" "$BIN_DIR/monitor-dock"
+ln -sfn "$REPO/src/presentation/cli/strata-monitor" "$BIN_DIR/strata-monitor"
+ln -sfn "$REPO/src/infrastructure/control/strata-monitor-ctl" "$BIN_DIR/strata-monitor-ctl"
 
 if [[ -f "$CONFIG" ]]; then
   tmp=$(mktemp)
@@ -31,7 +36,7 @@ fi
 chmod 600 "$CONFIG"
 
 if [[ -d "$HYPR_DIR" ]]; then
-  ln -sfn "$REPO/hypr/strata.lua" "$HYPR_DIR/strata.lua"
+  ln -sfn "$REPO/src/infrastructure/hyprland/strata.lua" "$HYPR_DIR/strata.lua"
   python3 - "$HYPR_DIR/hyprland.lua" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -107,7 +112,7 @@ Set "apiKey" in the config, then open it from the bar or with:
 The Omarchy bar has only the mini module. Double-click the mini window to
 switch to the normal layout, and double-click the normal window to switch back.
 
-Waybar: copy bar/waybar/config.jsonc and bar/waybar/style.css into your
+Waybar: copy src/presentation/bars/waybar/config.jsonc and style.css into your
 Waybar config. The same provider contract works for both bars and for other
-resource monitors in providers/.
+resource monitors in src/infrastructure/providers/.
 EOF

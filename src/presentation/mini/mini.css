@@ -1,6 +1,4 @@
-/* Mini Strata monitor. Scoped to html[data-strata-mini] so the normal page is
-   unaffected when the mini variant is not active. */
-html[data-strata-mini] {
+:root {
   color-scheme: dark;
   --mini-bg: #141518;
   --mini-surface: #1d1f23;
@@ -15,7 +13,7 @@ html[data-strata-mini] {
 }
 
 @media (prefers-color-scheme: light) {
-  html[data-strata-mini] {
+  :root {
     color-scheme: light;
     --mini-bg: #f4f4f2;
     --mini-surface: #ffffff;
@@ -30,42 +28,31 @@ html[data-strata-mini] {
   }
 }
 
-html[data-strata-mini],
-html[data-strata-mini] body {
-  margin: 0 !important;
-  padding: 0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  overflow: hidden !important;
-  background: var(--mini-bg) !important;
-}
-
-html[data-strata-mini] body > *:not(#strata-mini-root) {
-  display: none !important;
-}
-
-html[data-strata-mini]:not([data-strata-mini-ready]) body {
-  visibility: hidden !important;
-}
-
-#strata-mini-root {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   background: var(--mini-bg);
+}
+
+body {
   color: var(--mini-text);
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 11px;
   line-height: 1.25;
-  overflow: hidden;
   user-select: none;
   cursor: default;
 }
 
-#strata-mini-root * {
+* {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 .mini-shell {
@@ -91,10 +78,6 @@ html[data-strata-mini]:not([data-strata-mini-ready]) body {
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--mini-text);
-}
-
-.mini-spacer {
-  flex: 1;
 }
 
 .mini-pill {

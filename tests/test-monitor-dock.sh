@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-DOCK="$ROOT/bin/monitor-dock"
+DOCK="$ROOT/src/presentation/cli/monitor-dock"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -32,5 +32,10 @@ printf '%s' "$status" | jq -e 'has("text")' >/dev/null || fail "normal status sh
 echo "== default target resolution =="
 status=$("$DOCK" status --provider example)
 printf '%s' "$status" | jq -e '.text == "example"' >/dev/null || fail "default target"
+
+echo "== graph class / bar formatter =="
+sample='{"live":{"state":"generating","tok_s":19.1},"requests":[],"hardware":{},"history":{}}'
+out=$(printf '%s' "$sample" | node "$ROOT/src/infrastructure/providers/strata/graph-value.js" 0)
+[[ "$out" == $'Speed\t19.1 t/s' ]] || fail "graph formatter output: $out"
 
 echo "ok"

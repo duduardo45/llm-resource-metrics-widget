@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strata Mini</title>
+  <link rel="stylesheet" href="/src/presentation/mini/mini.css">
+</head>
+<body>
+  <div class="mini-shell">
+    <header class="mini-top">
+      <span class="mini-brand">Strata</span>
+      <span class="mini-pill" id="mini-pill" data-state="idle">
+        <span class="mini-dot"></span>
+        <span id="mini-pill-text">Connecting&hellip;</span>
+      </span>
+    </header>
+
+    <section class="mini-state">
+      <div class="mini-state-row">
+        <span class="mini-state-label" id="mini-state-label">Waiting for a request</span>
+        <span class="mini-state-detail" id="mini-state-detail"></span>
+      </div>
+      <div class="mini-progress"><span id="mini-state-bar"></span></div>
+    </section>
+
+    <section class="mini-card">
+      <div class="mini-card-head">
+        <span class="mini-card-label" id="mini-metric-label">Speed</span>
+        <span class="mini-card-value" id="mini-single-value">
+          <span id="mini-metric-value">&ndash;</span><small id="mini-metric-unit"></small>
+        </span>
+        <span class="mini-arrows">
+          <button type="button" id="mini-prev" aria-label="Previous graph" title="Previous graph">&#8249;</button>
+          <button type="button" id="mini-next" aria-label="Next graph" title="Next graph">&#8250;</button>
+        </span>
+      </div>
+      <div class="mini-dual" id="mini-dual" hidden>
+        <div class="mini-dual-block">
+          <span class="mini-dual-number" id="mini-decode-value">&ndash;</span><small>t/s</small>
+          <span class="mini-dual-sub">Decode</span>
+        </div>
+        <div class="mini-dual-block mini-dual-right">
+          <span class="mini-dual-number" id="mini-prefill-value">&ndash;</span><small>t/s</small>
+          <span class="mini-dual-sub">Prefill</span>
+        </div>
+      </div>
+      <div class="mini-spark-wrap">
+        <svg id="mini-spark" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+          <path class="mini-area" id="mini-decode-area"></path>
+          <path class="mini-line" id="mini-decode-line"></path>
+          <g class="mini-prefill-group">
+            <path class="mini-area" id="mini-prefill-area"></path>
+            <path class="mini-line" id="mini-prefill-line"></path>
+          </g>
+        </svg>
+      </div>
+      <div class="mini-card-foot">
+        <span id="mini-metric-sub"></span>
+        <span id="mini-metric-index">1 / 8</span>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/src/presentation/mini/main.js"></script>
+</body>
+</html>

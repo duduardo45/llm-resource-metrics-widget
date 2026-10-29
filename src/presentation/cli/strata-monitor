@@ -3,4 +3,4 @@
 # layer; the generic bar/application entry point is `monitor-dock`.
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
-exec "$HERE/../providers/strata/engine.sh" "$@"
+exec "$HERE/../../infrastructure/providers/strata/engine.sh" "$@"

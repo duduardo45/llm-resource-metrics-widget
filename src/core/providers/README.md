@@ -1,6 +1,6 @@
 # Provider contract
 
-A provider is an executable at `providers/<name>/provider.sh` (or a path passed
+A provider is an executable at `src/infrastructure/providers/<name>/provider.sh` (or a path passed
 to `--provider`). It is deliberately small so a new resource monitor can be
 added without touching `monitor-dock` or the bar adapters.
 
@@ -83,7 +83,7 @@ case "$cmd" in
 esac
 ```
 
-See [`example/provider.sh`](example/provider.sh) for a runnable reference:
+See [`example/provider.sh`](../../infrastructure/providers/example/provider.sh) for a runnable reference:
 
 ```bash
 monitor-dock status --provider example

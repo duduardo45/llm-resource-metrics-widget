@@ -7,27 +7,35 @@ can drive other resource monitors without changing the bar configuration.
 ## Layers
 
 ```
-bar/omarchy/   bar/waybar/        presentation adapters
-        \         /
-      bin/monitor-dock            application layer (bar-agnostic CLI)
-              |
-     providers/<name>/provider.sh provider contract
-              |
-   providers/strata/engine.sh     provider implementation (use cases)
-              |
-   Hyprland | Chromium | Strata   infrastructure / external systems
+src/presentation/bars/{omarchy,waybar}   presentation adapters
+                 │
+src/presentation/cli/monitor-dock        application entry point
+                 │
+src/core/providers (contract)             core boundary
+                 │
+src/infrastructure/providers/<name>       provider adapters
+                 │
+src/infrastructure/providers/strata/      Strata use cases + engine
+                 │
+   Hyprland | Chromium | Strata           external systems
+
+src/core/graphs/*.js                     one class per graph
+                 │
+src/presentation/mini/*.js               Sparkline / StateView / MiniView
 ```
 
-- `bin/monitor-dock` knows only the provider contract and normalized JSON.
-- `providers/<name>/provider.sh` is the adapter for one monitor.
-- `providers/strata/engine.sh` contains the Strata use cases and the
-  Hyprland/Chromium infrastructure calls.
-- `bar/omarchy` and `bar/waybar` are presentation adapters; they only call
-  `monitor-dock`.
-- `extension/` is the UI adapter used by the Strata provider's Chromium window.
+- `src/presentation/cli/monitor-dock` knows only the provider contract and
+  normalized JSON.
+- `src/infrastructure/providers/<name>/provider.sh` is the adapter for one
+  monitor.
+- `src/infrastructure/providers/strata/engine.sh` contains the Strata use
+  cases and the Hyprland/Chromium infrastructure calls.
+- `src/presentation/bars/` holds the Omarchy and Waybar adapters.
+- `src/core/graphs/` has one class per graph; the mini UI and the closed-bar
+  value both use them.
 
 See [`docs/architecture.md`](docs/architecture.md) and
-[`providers/README.md`](providers/README.md).
+[`src/core/providers/README.md`](src/core/providers/README.md).
 
 ## Layouts
 
@@ -48,7 +56,7 @@ shown.
 
 - Hyprland (the engine uses the Lua dispatcher API)
 - Omarchy shell or Waybar for the bar adapter
-- `chromium`, `jq`, `curl`, `python3`
+- `chromium`, `jq`, `curl`, `python3`, `node`
 
 ## Install
 
@@ -60,7 +68,7 @@ This creates:
 
 - `~/.local/bin/monitor-dock` (application entry point)
 - `~/.local/bin/strata-monitor` (compatibility wrapper)
-- `~/.local/bin/strata-monitor-ctl` (double-click bridge)
+- `~/.local/bin/strata-monitor-ctl` (localhost control server)
 - `~/.config/strata-monitor/config.json` from the example if missing
 - `~/.config/hypr/strata.lua` and requires it from `hyprland.lua`
 - the single mini module in `~/.config/omarchy/shell.json`
@@ -74,7 +82,7 @@ Then set the API key in the config:
 ```
 
 Waybar is not modified automatically. Copy the snippets from
-[`bar/waybar/`](bar/waybar/) into `~/.config/waybar/` as described there.
+[`src/presentation/bars/waybar/`](src/presentation/bars/waybar/) into `~/.config/waybar/` as described there.
 
 ## Usage
 
@@ -120,7 +128,7 @@ The mini window supports `←`/`→` and the mouse wheel to change graphs.
 ### Omarchy (Quickshell)
 
 `install.sh` inserts
-[`bar/omarchy/module.json`](bar/omarchy/module.json) into
+[`src/presentation/bars/omarchy/module.json`](src/presentation/bars/omarchy/module.json) into
 `~/.config/omarchy/shell.json`:
 
 ```json
@@ -141,10 +149,10 @@ The live layout is user config and is not tracked.
 ### Waybar
 
 Copy the module from
-[`bar/waybar/config.jsonc`](bar/waybar/config.jsonc) into
+[`src/presentation/bars/waybar/config.jsonc`](src/presentation/bars/waybar/config.jsonc) into
 `~/.config/waybar/config.jsonc`, add `"custom/strata-mini"` to
 `modules-right`, and optionally copy
-[`bar/waybar/style.css`](bar/waybar/style.css) into
+[`src/presentation/bars/waybar/style.css`](src/presentation/bars/waybar/style.css) into
 `~/.config/waybar/style.css`.
 
 Waybar uses the same JSON:
@@ -159,7 +167,7 @@ normalized status shape. Waybar applies `class` to the widget, so
 
 ## Provider contract
 
-A provider is `providers/<name>/provider.sh` with these subcommands:
+A provider is `src/infrastructure/providers/<name>/provider.sh` with these subcommands:
 
 | Command | Output / action |
 | --- | --- |
@@ -177,18 +185,19 @@ provider is unavailable. Provider-specific commands (for example
 `ctl-stop`) are passed through unchanged.
 
 An annotated reference implementation is in
-[`providers/example/provider.sh`](providers/example/provider.sh). To add a new
+[`src/infrastructure/providers/example/provider.sh`](src/infrastructure/providers/example/provider.sh). To add a new
 resource monitor, copy that directory:
 
 ```bash
 mkdir -p providers/my-monitor
-cp providers/example/provider.sh providers/my-monitor/provider.sh
-$EDITOR providers/my-monitor/provider.sh
+mkdir -p src/infrastructure/providers/my-monitor
+cp src/infrastructure/providers/example/provider.sh src/infrastructure/providers/my-monitor/provider.sh
+$EDITOR src/infrastructure/providers/my-monitor/provider.sh
 monitor-dock status --provider my-monitor
 ```
 
 Then point the bar adapter at `--provider my-monitor`. Neither the application
-nor the bar adapter needs to change. See [`providers/README.md`](providers/README.md).
+nor the bar adapter needs to change. See [`src/core/providers/README.md`](src/core/providers/README.md).
 
 ## Configuration
 
@@ -219,12 +228,18 @@ open/toggle and relaunch automatically.
 
 - `monitor-dock` resolves a provider and a target, then calls `status` or an
   action.
-- `providers/strata/provider.sh` maps the contract to the Strata engine.
-- The engine launches a Chromium app window with a dedicated profile. A
-  generated extension seeds the API key, applies the normal-layout overrides,
-  provides the optional-overlay mini dashboard, and handles double-click.
-- `strata-monitor-ctl` is a localhost-only HTTP server used for the
-  double-click bridge and the mini graph selection.
+- `src/infrastructure/providers/strata/provider.sh` maps the contract to the Strata engine.
+- The engine launches a Chromium app window with a dedicated profile. For the
+  normal layout, a generated extension seeds the API key, applies the
+  zoom/grid overrides, and handles double-click. The mini layout is a local
+  page served by the control server.
+- `src/infrastructure/control/strata-monitor-ctl` serves the mini presentation
+  layer and `/src/...` modules, proxies `/metrics` with the API key, handles
+  double-click switching, and stores the selected graph index.
+- The mini UI is native ES modules: `MiniView` + `StateView` + `Sparkline`
+  render `src/core/graphs/*` classes. There is one class per graph.
+- The closed mini bar value is formatted by
+  `src/infrastructure/providers/strata/graph-value.js`, which imports the same graph classes.
 - Hyprland handles floating, sizing, positioning, pinning, and closing.
 - The Hyprland rule uses `opacity = "1 override 1 override"` and
   `no_dim = true`, so the global `inactive_opacity`/`dim_inactive` looknfeel
@@ -234,25 +249,39 @@ open/toggle and relaunch automatically.
 ## Repo layout
 
 ```
-bin/monitor-dock              # application layer, bar-agnostic
-bin/strata-monitor            # compatibility wrapper
-bin/strata-monitor-ctl        # localhost double-click bridge
-providers/strata/provider.sh  # Strata provider adapter
-providers/strata/engine.sh    # Strata use cases + infrastructure
-providers/example/provider.sh # annotated provider template
-extension/mini.html           # mini dashboard markup
-extension/mini.css            # mini dashboard styling
-extension/mini.js             # mini dashboard logic/polling
-extension/dblclick.js         # double-click -> control server
+src/core/
+  format.js                       # number/GB formatting
+  graphs/                         # one class per graph
+    graph.js
+    speed-graph.js
+    gpu-load-graph.js
+    vram-graph.js
+    gpu-temp-graph.js
+    power-graph.js
+    pcie-graph.js
+    cpu-graph.js
+    disk-read-graph.js
+    index.js                      # ordered graph registry
+  providers/README.md             # provider contract
+src/presentation/
+  cli/monitor-dock                # application layer, bar-agnostic
+  cli/strata-monitor              # compatibility wrapper
+  mini/                           # index.html, css, view modules
+  bars/omarchy/module.json        # Omarchy bar snippet
+  bars/waybar/                    # Waybar config/style snippets
+  bars/README.md
+src/infrastructure/
+  providers/strata/provider.sh    # Strata provider adapter
+  providers/strata/engine.sh      # Strata use cases + infrastructure
+  providers/strata/graph-value.js # shared graph formatter for the bar
+  providers/example/provider.sh   # annotated provider template
+  control/strata-monitor-ctl      # localhost server / metrics proxy
+  chromium/content/dblclick.js    # normal-page content script
+  hyprland/strata.lua             # floating/opacity window rules
 config/config.example.json
-hypr/strata.lua               # floating/opacity window rules
-bar/omarchy/module.json       # Omarchy bar module snippet
-bar/waybar/                   # Waybar config/style snippets
-bar/README.md                 # bar adapter overview
-docs/architecture.md          # layer boundaries and contract
-providers/README.md           # provider contract
-install.sh
+docs/architecture.md
 tests/test-monitor-dock.sh
+install.sh
 ```
 
 ## Troubleshooting

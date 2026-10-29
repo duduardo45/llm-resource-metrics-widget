@@ -19,8 +19,8 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
-PROJECT_DIR=$(cd "$HERE/.." && pwd)
-PROVIDER_DIR="${MONITOR_DOCK_PROVIDER_DIR:-$PROJECT_DIR/providers}"
+SRC_DIR=$(cd "$HERE/../.." && pwd)
+PROVIDER_DIR="${MONITOR_DOCK_PROVIDER_DIR:-$SRC_DIR/infrastructure/providers}"
 PROVIDER="${MONITOR_DOCK_PROVIDER:-strata}"
 TARGET=""
 COMMAND=""
